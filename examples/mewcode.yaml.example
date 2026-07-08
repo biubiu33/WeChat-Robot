@@ -1,0 +1,13 @@
+providers:
+  - name: openai
+    protocol: openai
+    model: gpt-4o-mini
+    base_url: https://api.openai.com/v1
+    api_key: sk-your-openai-key
+
+  - name: claude
+    protocol: anthropic
+    model: claude-sonnet-5
+    base_url: https://api.anthropic.com/v1
+    api_key: sk-ant-your-anthropic-key
+    thinking: true
