@@ -1,388 +1,307 @@
-# MewCode 交互式对话 TUI 技术设计
+# 多协议 LLM 终端对话客户端 Plan
 
-## 架构概览
-MewCode 第一阶段采用轻量命令行架构，由 CLI 入口、配置加载、会话循环、Provider 抽象、两个协议实现和 SSE 解析组成。
+## 技术栈
+- 语言：Python 3.12+
+- TUI：[Textual](https://textual.textualize.io/)（async-first 的 TUI 框架）+ Rich（Markdown/语法高亮渲染）
+  + Textual CSS（样式/布局）；内置 widget 包含 `Input`、`RichLog`、`Static`、`LoadingIndicator`、
+  `Markdown`、`OptionList` 等。
+- 配置：YAML 解析（`pyyaml`，import 名 `yaml`）
+- LLM 通信：官方 Python SDK —— `anthropic`（`AsyncAnthropic`）、`openai`（`AsyncOpenAI`），均原生支持
+  async 流式（SDK 内部已处理 SSE）
 
-主流程如下：
+## 架构概览（分层）
+1. 入口层 `mewcode.cli` —— 加载配置、打印 banner、启动 Textual App。
+2. 配置层 `mewcode.config` —— 读取并校验 `.mewcode/config.yaml`，给出 providers 列表。
+3. LLM 协议层 `mewcode.llm` —— 定义协议无关的 `Provider` Protocol 与统一消息/流式事件类型；
+   anthropic、openai 两个适配器各自封装官方 SDK、统一吐出文本增量（思考增量内部丢弃）。
+4. 会话层 `mewcode.conversation` —— 进程内维护多轮历史，提供完整上下文。
+5. 提示词/资源 `mewcode.prompt` —— 内置 system prompt 与启动 banner（ASCII 猫）。
+6. 终端层 `mewcode.tui` —— Textual App，含状态机（选择/空闲/流式）、输入框、对话区、
+   loading 计时、provider 选择列表；以 async task 消费 `Provider.stream(...)` 的事件生成器，
+   通过 `call_from_thread`/直接 await 把增量写入 UI。
 
-1. CLI 解析启动参数，读取 UTF-8 YAML 配置文件。
-2. 配置层校验多个 provider profile，并按 `--profile <name>` 选择一个配置。
-3. Provider 工厂根据 `protocol` 创建 OpenAI 兼容或 Anthropic Claude 兼容 Provider。
-4. 会话循环显示中文提示，接收用户输入，维护当前进程内的消息历史。
-5. 每次用户输入后，会话循环调用统一 Provider 接口。
-6. Provider 使用 HTTP 流式请求读取 SSE 事件，把可见文本片段逐步产出。
-7. 会话循环将文本片段立即写入终端并 flush，流结束后把完整助手回复加入历史。
-8. 配置错误、请求错误、流式解析错误都转换为中文错误信息，并对 API Key 做脱敏。
+## 数据流（一轮对话）
+用户输入 → TUI 提交 → conversation 追加 user 消息 → 调 `Provider.stream(msgs)`
+→ 得到 `AsyncIterator[StreamEvent]` → TUI async task 逐个 `async for` 读文本增量并实时
+追加（loading 计时同步进行）→ 收到结束事件 → 用 Rich Markdown 渲染整段 → conversation
+追加 assistant 消息 → 回到空闲。
 
-本阶段不引入全屏 TUI 框架；终端界面使用标准输入输出实现，便于测试和保持首个里程碑稳定。
+> 备注：Python 的 Textual + asyncio 是 async-first 体系，直接 `async for event in
+> provider.stream(...)` 即可驱动 UI；没有 goroutine / channel / `tea.Cmd` 的胶水层。
 
-## 核心数据结构
-
-### ProviderProfile
-表示 YAML 中的单个 LLM 供应商配置。
+## 核心数据结构与接口
 
 ```python
-@dataclass(frozen=True)
-class ProviderProfile:
-    name: str
-    protocol: Literal["openai", "anthropic"]
-    model: str
-    base_url: str
+# ───────── config 层 ─────────
+from dataclasses import dataclass, field
+from typing import Literal
+
+@dataclass
+class ProviderConfig:
+    name: str                          # 状态栏左侧显示
+    protocol: Literal["anthropic", "openai"]
     api_key: str
-    thinking: bool = False
-```
+    model: str                         # 状态栏右侧显示
+    base_url: str | None = None        # None 则用 SDK 默认端点
+    thinking: bool = False             # 仅 anthropic 生效
 
-字段含义：
-- `name`：配置标识名，对应启动参数 `--profile`。
-- `protocol`：协议类型，决定使用 OpenAI 兼容 Provider 或 Anthropic Provider。
-- `model`：请求中的模型名称。
-- `base_url`：API 基础地址，不在配置层自动猜测。
-- `api_key`：认证密钥，只用于请求头，不进入普通输出。
-- `thinking`：仅 Anthropic Provider 使用；为 `true` 时请求 Claude extended thinking。
+@dataclass
+class Config:
+    providers: list[ProviderConfig] = field(default_factory=list)
 
-### ChatMessage
-表示会话历史中的一条可见消息。
+def load(path: str) -> Config: ...     # 加载 + 校验
 
-```python
-@dataclass(frozen=True)
-class ChatMessage:
+# ───────── llm 层（协议无关）─────────
+from typing import Protocol, AsyncIterator
+
+@dataclass
+class Message:
     role: Literal["user", "assistant"]
     content: str
+
+@dataclass
+class StreamEvent:
+    text: str = ""                     # 文本增量
+    done: bool = False                 # 本轮正常结束
+    err: Exception | None = None       # 出错（与 done 互斥）
+
+class Provider(Protocol):
+    @property
+    def name(self) -> str: ...         # -> 状态栏左
+    @property
+    def model(self) -> str: ...        # -> 状态栏右
+    # 发起一轮流式对话；内部注入内置 system prompt 与 thinking 配置；
+    # 思考增量内部丢弃；以 async generator 吐出 StreamEvent；
+    # 调用方 cancel() 该 task 即终止。
+    def stream(self, msgs: list[Message]) -> AsyncIterator[StreamEvent]: ...
+
+def new_provider(cfg: ProviderConfig) -> Provider: ...   # 按 protocol 构造适配器
+
+# ───────── conversation 层 ─────────
+class Conversation:
+    def __init__(self) -> None:
+        self._messages: list[Message] = []
+    def add_user(self, text: str) -> None: ...
+    def add_assistant(self, text: str) -> None: ...
+    def messages(self) -> list[Message]: ...    # 返回副本
+
+# ───────── prompt 层 ─────────
+SYSTEM_PROMPT: str = "..."             # 内置固定 system prompt
+CAT_BANNER: str = "..."                # ASCII 猫
+def render_banner(version: str, cwd: str) -> str: ...
+
+# ───────── tui 层 ─────────
+from enum import Enum
+
+class SessionState(Enum):
+    SELECTING = "selecting"            # 多 provider 时的选择界面
+    IDLE = "idle"                      # 等待用户输入
+    STREAMING = "streaming"            # 等待/接收模型流（loading + 计时）
+
+class MewCodeApp(App):
+    # 关键 reactive / 成员
+    state: SessionState
+    providers: list[ProviderConfig]
+    provider: Provider | None
+    conv: Conversation
+    cur_reply: str                     # 本轮 assistant 增量缓冲（动态区显示，done 后追加到 RichLog）
+    turn_start: float                  # time.monotonic() 计时起点
+    _stream_task: asyncio.Task | None  # 当前流式消费 task
+    _timer: Timer | None               # Textual 内置定时器，用于秒数计时刷新
+    # 完成的消息（用户输入 / 渲染后的助手回复 / 错误）通过 RichLog.write(...) 持久追加，
+    # 滚回历史用 RichLog 自带的滚动；不再单独保留消息列表。
+
+    async def submit(self, text: str) -> None: ...
+    async def _consume_stream(self) -> None: ...     # async for event in provider.stream(...)
 ```
-
-本阶段只保存同一次运行中的可见文本历史，不持久化到磁盘。
-
-### StreamChunk
-表示 Provider 流式产出的一个可见文本片段。
-
-```python
-@dataclass(frozen=True)
-class StreamChunk:
-    text: str
-```
-
-Provider 内部可以接收更多 SSE 事件类型，但统一接口只向会话层暴露需要打印的文本。
-
-### ChatProvider
-Provider 统一接口。
-
-```python
-class ChatProvider(Protocol):
-    def stream_chat(self, messages: Sequence[ChatMessage]) -> Iterator[StreamChunk]:
-        ...
-```
-
-约束：
-- `messages` 必须包含当前用户消息和之前的会话历史。
-- 只产出可见助手文本，不产出工具调用、文件操作或 shell 行为。
-- 请求失败、状态码错误、流式协议异常统一抛出 `ProviderError`。
-
-### MewCodeError
-错误类型分层。
-
-```python
-class MewCodeError(Exception): ...
-class ConfigError(MewCodeError): ...
-class ProviderError(MewCodeError): ...
-class StreamProtocolError(ProviderError): ...
-```
-
-用户可见错误由 CLI 层统一格式化为中文，并在格式化前对当前 profile 的 API Key 做脱敏。
 
 ## 模块设计
 
-### `mewcode.cli`
-**职责：** 命令行入口和启动参数解析。
+### 模块 `mewcode.config`
+职责：读取并校验 `.mewcode/config.yaml`，产出 providers 列表。
+对外接口：`load(path) -> Config`；`Config.providers`。
+校验规则：列表非空；每项 `name` / `protocol` / `api_key` / `model` 非空；
+         `protocol ∈ {"anthropic", "openai"}`。任一不满足 → 抛出 `ConfigError` 携带可读信息
+         （指明哪个 provider 的哪个字段）。
+依赖：`pyyaml`、标准库 `pathlib` / `os`。
 
-**公开接口：**
+### 模块 `mewcode.llm`
+职责：定义协议无关的 `Provider` Protocol 与统一消息/事件类型；按 protocol 构造适配器。
+对外接口：`Provider`（typing.Protocol）、`Message`、`StreamEvent`、`new_provider(cfg) -> Provider`。
+子单元：
+  - anthropic 适配器：封装 `anthropic.AsyncAnthropic`。把 `list[Message]` 转为 SDK 的
+    messages 入参，注入 `system=SYSTEM_PROMPT`、按 `cfg.thinking` 设 `thinking={"type":"enabled","budget_tokens":...}`；
+    使用 `async with client.messages.stream(...) as stream: async for event in stream:` 迭代，
+    取 `event.type == "content_block_delta"` 中的 `text` delta → `StreamEvent(text=...)`；
+    遇 thinking delta 丢弃；正常结束 yield `StreamEvent(done=True)`；
+    异常路径 yield `StreamEvent(err=exc)`。`cfg.base_url` 非空时传 `base_url=...` 构造 client。
+  - openai 适配器：封装 `openai.AsyncOpenAI`。把 `list[Message]` 转为 `messages=[...]`，
+    首条插入 `{"role":"system","content": SYSTEM_PROMPT}`；
+    `async for chunk in await client.chat.completions.create(..., stream=True):` 迭代，
+    取 `chunk.choices[0].delta.content` 非空时 yield `StreamEvent(text=...)`；
+    正常结束 yield `StreamEvent(done=True)`；异常 yield `StreamEvent(err=exc)`。
+    `cfg.base_url` 非空时传 `base_url=...`；`thinking` 字段忽略。
+共同点：两适配器都把 `stream(...)` 实现为 `async def stream(...) -> AsyncIterator[StreamEvent]`
+       的 async generator；调用方 cancel 对应 task 时，`async for` 自然抛 `CancelledError`，
+       SDK 流由 `async with` 上下文自动清理。
+依赖：`anthropic`、`openai`、本模块 `prompt`、`config`。
 
-```python
-def main(argv: Sequence[str] | None = None) -> int
-```
+### 模块 `mewcode.conversation`
+职责：进程内维护单会话多轮历史（user/assistant 交替）。
+对外接口：`add_user`、`add_assistant`、`messages()`。
+依赖：`llm`（`Message` 类型）。
 
-**启动参数：**
-- `--profile <name>`：必填，选择 YAML 中的 provider profile。
-- `--config <path>`：可选，默认读取当前目录的 `mewcode.yaml`。
+### 模块 `mewcode.prompt`
+职责：提供内置 system prompt 与 ASCII 猫 banner 文本。
+对外接口：`SYSTEM_PROMPT` 常量、`CAT_BANNER` 常量、`render_banner(version, cwd) -> str`。
+依赖：无。
 
-**行为：**
-- 成功启动时进入中文交互式会话。
-- 配置或启动错误返回非零退出码。
-- Ctrl-D、Ctrl-Z 输入结束或退出命令返回 0。
+### 模块 `mewcode.tui`
+职责：Textual App，承载选择/对话/流式/错误的全部交互与渲染。
+对外接口：`MewCodeApp(providers: list[ProviderConfig])`；`App.run()` 或 `await App.run_async()`。
+内部职责：
+  - 启动时若 `len(providers) > 1` → `SessionState.SELECTING`（`OptionList` 选择）；
+    否则直接进 `SessionState.IDLE` 并 `new_provider(providers[0])`。
+  - IDLE：`Input` 接收输入；Enter 提交（Alt+Enter 插入换行——`Input` 默认单行，需挂自定义
+    binding 或用 `TextArea` 替代以支持多行；本项目用 `TextArea` 承担多行 + Alt+Enter 换行）；
+    `/exit` 或 Ctrl+C 退出。
+  - 提交：`conv.add_user(text)` → 启动 `self._stream_task = asyncio.create_task(self._consume_stream())`
+    → `RichLog.write(user_block(text))` 追加用户块 → `turn_start = time.monotonic()`、
+    `cur_reply = ""`、清空输入框 → 切 `STREAMING` → `_timer = self.set_interval(0.1, self._tick)`
+    刷新 "Imagining… (Ns)"。
+  - `_consume_stream`：`async for event in self.provider.stream(self.conv.messages()):`
+    - `event.text` 非空 → `cur_reply += event.text`、更新动态区显示；
+    - `event.done` → 用 `rich.markdown.Markdown(cur_reply)` 渲染 → `RichLog.write(...)` 追加
+      → `conv.add_assistant(cur_reply)` → 清缓冲、停止 timer、回 `IDLE`；
+    - `event.err is not None` → `RichLog.write(error_block(event.err))` → 停止 timer、回 `IDLE`。
+  - 窗口尺寸：Textual 自动 reflow，必要时通过 CSS 设置 `Markdown` / `RichLog` 的 `width: 1fr`
+    与最大宽度（N6）。
+依赖：`textual`、`rich`、本项目 `llm`、`conversation`、`config`、`prompt`。
 
-### `mewcode.config`
-**职责：** 按 UTF-8 读取 YAML，校验 provider profile，按名称选择配置。
-
-**公开接口：**
-
-```python
-def load_profiles(path: Path) -> list[ProviderProfile]
-def select_profile(profiles: Sequence[ProviderProfile], name: str) -> ProviderProfile
-```
-
-**YAML 结构：**
-
-```yaml
-providers:
-  - name: claude
-    protocol: anthropic
-    model: claude-sonnet-5
-    base_url: https://api.anthropic.com/v1
-    api_key: sk-ant-...
-    thinking: true
-  - name: openai
-    protocol: openai
-    model: gpt-5.5
-    base_url: https://api.openai.com/v1
-    api_key: sk-...
-```
-
-**校验规则：**
-- 顶层必须包含 `providers` 列表。
-- 每个 profile 必须包含 `name`、`protocol`、`model`、`base_url`、`api_key`。
-- `thinking` 可省略，省略时为 `false`。
-- `protocol` 只接受 `openai` 或 `anthropic`。
-- `name` 不允许为空，且不允许重复。
-- 错误信息不能包含原始 API Key。
-
-### `mewcode.chat`
-**职责：** 交互式对话循环、中文提示、会话历史维护、流式打印。
-
-**公开接口：**
-
-```python
-def run_chat(provider: ChatProvider, profile_name: str, io: ConsoleIO | None = None) -> int
-```
-
-**行为：**
-- 启动后显示中文欢迎信息和当前 profile 名称。
-- 用户提示符使用中文，例如 `你> `。
-- 助手输出前显示 `MewCode> `，随后逐块打印 Provider 产出的文本。
-- 用户输入 `/exit`、`/quit`、`退出` 或 `再见` 时退出。
-- 空输入不发送给后端。
-- 每次请求前先追加用户消息；流成功完成后追加助手消息。
-- 如果流式请求失败，打印中文错误，不追加失败的助手消息，并回到输入循环。
-
-### `mewcode.io`
-**职责：** 封装标准输入输出，便于测试中文输入和流式输出。
-
-**公开接口：**
-
-```python
-@dataclass
-class ConsoleIO:
-    input: Callable[[str], str]
-    write: Callable[[str], None]
-    flush: Callable[[], None]
-```
-
-默认实现使用 `input()`、`sys.stdout.write()` 和 `sys.stdout.flush()`。
-
-### `mewcode.providers.base`
-**职责：** 定义 Provider 协议、通用异常和通用脱敏工具。
-
-**公开接口：**
-
-```python
-def redact_secret(text: str, secret: str) -> str
-```
-
-### `mewcode.providers.factory`
-**职责：** 根据 `ProviderProfile.protocol` 创建具体 Provider。
-
-**公开接口：**
-
-```python
-def create_provider(profile: ProviderProfile) -> ChatProvider
-```
-
-### `mewcode.providers.openai`
-**职责：** 实现 OpenAI 兼容 Chat Completions 流式协议。
-
-**请求：**
-- URL：`{base_url}/chat/completions`
-- 方法：`POST`
-- Header：`Authorization: Bearer <api_key>`
-- Payload：
-
-```json
-{
-  "model": "<model>",
-  "messages": [{"role": "user", "content": "..."}],
-  "stream": true
-}
-```
-
-**流式解析：**
-- 按 SSE `data:` 行解析。
-- `data: [DONE]` 表示流结束。
-- JSON chunk 中读取 `choices[0].delta.content` 作为可见文本。
-- 忽略空 delta、usage chunk 和工具相关字段。
-
-### `mewcode.providers.anthropic`
-**职责：** 实现 Anthropic Claude Messages 流式协议。
-
-**请求：**
-- URL：`{base_url}/messages`
-- 方法：`POST`
-- Header：`x-api-key: <api_key>`、`anthropic-version`、`content-type: application/json`
-- Payload：
-
-```json
-{
-  "model": "<model>",
-  "max_tokens": 4096,
-  "messages": [{"role": "user", "content": "..."}],
-  "stream": true
-}
-```
-
-**thinking 行为：**
-- 当 `thinking` 为 `true` 时，在 payload 中加入：
-
-```json
-{
-  "thinking": {
-    "type": "adaptive",
-    "display": "omitted"
-  }
-}
-```
-
-这样会请求 Claude extended thinking，但 TUI 只显示最终助手文本，不显示 thinking 内容。
-
-**流式解析：**
-- 按 SSE event/data 解析。
-- 只把 `content_block_delta` 中 `delta.type == "text_delta"` 的 `delta.text` 产出给会话层。
-- 忽略 `thinking_delta`、`signature_delta`、usage 和 message 生命周期事件。
-- 如果后端发送错误事件或响应状态码非 2xx，抛出 `ProviderError`。
-
-### `mewcode.sse`
-**职责：** 提供通用 SSE 行解析工具，不绑定具体供应商。
-
-**公开接口：**
-
-```python
-@dataclass(frozen=True)
-class SSEEvent:
-    event: str | None
-    data: str
-
-def iter_sse_events(lines: Iterable[str]) -> Iterator[SSEEvent]
-```
-
-**行为：**
-- 支持多行 `data:` 合并。
-- 空行表示一个 SSE event 结束。
-- 忽略注释行。
-- 不解析 JSON；JSON 解析交给 Provider。
-
-### `mewcode.http`
-**职责：** 创建可注入的 HTTP 客户端，便于测试时替换 transport。
-
-**公开接口：**
-
-```python
-def create_http_client() -> httpx.Client
-```
-
-默认超时使用较长 read timeout，以适配流式响应。
+### 模块 `mewcode.cli`（入口）
+职责：装配与启动。
+流程：`config.load(...)` → `prompt.render_banner(version, cwd)` 打印 → `MewCodeApp(cfg.providers).run()`。
+失败处理：配置错误打印可读信息并 `sys.exit(1)`（N4）。
+依赖：`config`、`tui`、`prompt`。
 
 ## 模块交互
 
-```text
-用户终端
-  -> mewcode.cli.main
-  -> mewcode.config.load_profiles
-  -> mewcode.config.select_profile
-  -> mewcode.providers.factory.create_provider
-  -> mewcode.chat.run_chat
-  -> ChatProvider.stream_chat
-  -> httpx streaming request
-  -> mewcode.sse.iter_sse_events
-  -> Provider 解析文本 chunk
-  -> mewcode.chat 逐块写入终端
+### 调用链（启动）
+```
+main() → config.load(".mewcode/config.yaml")
+       → 若 ConfigError：打印可读错误、sys.exit(1)
+       → print(prompt.render_banner(version, cwd))
+       → MewCodeApp(cfg.providers).run()
+         → len(providers) == 1：内部 new_provider(cfg[0]) 构造 provider，进 IDLE
+         → len(providers)  > 1：进 SELECTING
+```
+
+### 时序（多 provider 选择）
+```
+SELECTING:
+  OptionList 显示各 provider 的 name + model
+  用户方向键移动、Enter 选定
+  → new_provider(选定 cfg) 构造 provider
+  → 状态栏更新为 provider.name / provider.model
+  → 进 IDLE
+```
+
+### 时序（一轮对话，核心）
+```
+IDLE:
+  用户在 TextArea 输入，Enter 提交
+  → conv.add_user(text)
+  → RichLog.write(user_block(text))
+  → turn_start = time.monotonic()；cur_reply = ""
+  → self._stream_task = asyncio.create_task(self._consume_stream())
+  → self._timer = self.set_interval(0.1, self._tick)
+  → 切 STREAMING
+
+STREAMING（async 循环）:
+  _tick → 更新动态区底部 "Imagining… (Ns)"
+  _consume_stream 内 async for event:
+    - event.text → cur_reply += event.text；更新动态区显示
+    - event.done → Rich Markdown 渲染 → RichLog.write(...) → conv.add_assistant → 停 timer → 回 IDLE
+    - event.err  → RichLog.write(error_block) → 停 timer → 回 IDLE（不退出）
+  期间输入框不接受提交（N1：UI 仍响应，可滚动 RichLog 回看完成内容）
+```
+
+### 时序（退出）
+```
+任意状态：输入 "/exit"（IDLE 识别）或 Ctrl+C
+  → 若存在 self._stream_task：task.cancel() 终止进行中的流
+  → App.exit() → Textual 还原终端 raw mode（N7）
+```
+
+### 数据流图
+```
+config.yaml ──load──> list[ProviderConfig] ──new_provider──> Provider
+用户输入 ──> conversation(+user) ──messages()──> Provider.stream
+Provider.stream ──async generator──> StreamEvent (text / done / err)
+                                         │
+                                         └──async for──> MewCodeApp._consume_stream
+                                                            │
+                                                            ├── text  → 动态区追加
+                                                            └── done  → rich.Markdown 渲染
+                                                                       → RichLog.write(...)
+                                                                       → conversation(+assistant)
 ```
 
 ## 文件组织
-
-```text
-Mewcode/
-+-- pyproject.toml                     - Python 包元数据、依赖、测试配置
-+-- README.md                          - 最小运行说明和配置示例
-+-- spec.md                            - 已批准规格
-+-- plan.md                            - 技术设计
-+-- task.md                            - 后续任务拆分
-+-- checklist.md                       - 后续验收清单
-+-- examples/
-|   `-- mewcode.yaml.example           - UTF-8 示例配置
-+-- mewcode/
-|   +-- __init__.py                    - 包版本
-|   +-- __main__.py                    - `python -m mewcode` 入口
-|   +-- cli.py                         - CLI 参数和入口返回码
-|   +-- chat.py                        - 对话循环和流式打印
-|   +-- config.py                      - YAML 加载和配置校验
-|   +-- errors.py                      - 通用错误类型
-|   +-- http.py                        - HTTP client 创建
-|   +-- io.py                          - 可测试的终端 IO 封装
-|   +-- models.py                      - ProviderProfile、ChatMessage、StreamChunk
-|   +-- sse.py                         - SSE 解析
-|   `-- providers/
-|       +-- __init__.py
-|       +-- base.py                    - Provider Protocol 和脱敏工具
-|       +-- factory.py                 - Provider 工厂
-|       +-- openai.py                  - OpenAI 兼容协议
-|       `-- anthropic.py               - Claude 兼容协议
-`-- tests/
-    +-- test_config.py                 - 配置加载、校验、profile 选择
-    +-- test_sse.py                    - SSE 解析
-    +-- test_openai_provider.py        - OpenAI 流式解析和请求 payload
-    +-- test_anthropic_provider.py     - Claude 流式解析、thinking payload
-    +-- test_chat.py                   - 多轮历史、中文 IO、退出行为
-    `-- test_cli.py                    - CLI 参数、错误返回码
 ```
+mewcode/
+├── pyproject.toml                  — PEP 621 项目元数据、依赖、脚本入口
+├── README.md
+├── .mewcode/
+│   └── config.yaml                 — 运行配置（providers 列表）；附 config.yaml.example
+├── src/
+│   └── mewcode/
+│       ├── __init__.py
+│       ├── __main__.py             — 允许 `python -m mewcode`
+│       ├── cli.py                  — 入口：加载配置、打印 banner、启动 TUI
+│       ├── config.py               — Config / ProviderConfig 类型、load 与校验
+│       ├── prompt.py               — SYSTEM_PROMPT、CAT_BANNER、render_banner
+│       ├── conversation.py         — 单会话多轮历史
+│       ├── llm/
+│       │   ├── __init__.py         — Provider Protocol、Message、StreamEvent、new_provider 工厂
+│       │   ├── anthropic_provider.py  — anthropic 适配器（封装 AsyncAnthropic）
+│       │   └── openai_provider.py     — openai 适配器（封装 AsyncOpenAI）
+│       └── tui/
+│           ├── __init__.py
+│           ├── app.py              — MewCodeApp、状态机、Run
+│           ├── stream.py           — _consume_stream、_tick 计时
+│           ├── select.py           — provider 选择（OptionList）
+│           └── view.py             — 各状态的渲染拼装、状态栏、错误样式、markdown 定型
+└── tests/
+    ├── test_config.py
+    └── test_conversation.py
+```
+说明：
+- 依赖版本预期：`textual`、`rich`、`anthropic`、`openai`、`pyyaml`。在 `pyproject.toml` 中
+  以 `dependencies = [...]` 声明，锁文件用 `uv.lock`（推荐 `uv`）或 `pip-compile` 生成的
+  `requirements.txt`。
+- `tui/` 拆 4 个文件按职责切分；若实现时过碎可合并，不影响接口。
+- `.mewcode/config.yaml` 含真实密钥，应在 `.gitignore` 忽略；提交一份 `config.yaml.example`。
+- `pyproject.toml` 里通过 `[project.scripts] mewcode = "mewcode.cli:main"` 暴露 CLI 入口；
+  装好后既可 `mewcode` 也可 `python -m mewcode`。
 
 ## 技术决策
 
-| 决策 | 选择 | 原因 |
-|------|------|------|
-| Python 版本 | Python 3.12 | 用户会使用 conda 创建 Python 3.12 环境；项目按 3.12 语法、类型和打包配置编写 |
-| 终端界面 | 标准输入输出 | 本阶段只需简单交互和流式打印，不引入复杂 TUI 依赖 |
-| HTTP 客户端 | `httpx` 同步流式客户端 | 支持 streaming、测试 transport 注入，避免 async 对首阶段造成额外复杂度 |
-| YAML 解析 | `PyYAML` | 标准库不支持 YAML，依赖小且常见 |
-| 配置结构 | 顶层 `providers` 列表 | 支持多个 profile，同时保持每个 profile 只有规格要求的字段 |
-| OpenAI 协议 | Chat Completions + `stream: true` | OpenAI 兼容生态支持面更广，满足本阶段纯对话需求 |
-| Claude 协议 | Messages API + SSE | 符合 Claude 当前消息接口和流式输出方式 |
-| Claude thinking | `thinking: {"type": "adaptive", "display": "omitted"}` | 用布尔配置启用 extended thinking，同时避免在 TUI 暴露 thinking 内容 |
-| Provider 接口 | 统一产出 `StreamChunk` | 会话层只关心可见文本，协议差异留在 Provider 内部 |
-| 历史保存 | 进程内 `list[ChatMessage]` | 满足多轮记忆，不做跨启动持久化 |
-| 测试策略 | 使用 fake provider 和 fake HTTP transport | 验证请求、SSE 和 TUI 行为，不依赖真实 API 或网络 |
-| 编码 | 显式 UTF-8 读写项目文本 | 满足中文输入输出和文档编码要求 |
-
-## 外部依赖
-
-运行依赖：
-- `httpx`
-- `PyYAML`
-
-开发测试依赖：
-- `pytest`
-
-首阶段不依赖 OpenAI 或 Anthropic 官方 SDK，避免 Provider 抽象被 SDK 类型绑定，并保留对兼容后端的控制。
-
-项目运行目标为 Python 3.12。当前开发沙箱的 Python 版本不作为项目兼容性要求；后续实现只需保证代码逻辑正确，并能在 Python 3.12 环境中编译和测试通过。
-
-## 验证策略
-
-单元测试：
-- 配置文件支持多个 profile，并能按名称选择。
-- 缺失字段、重复名称、未知 protocol、缺失 profile 都产生中文错误。
-- API Key 不会出现在格式化后的错误信息中。
-- SSE parser 能处理多行 data、空行结束、注释行。
-- OpenAI Provider 会构造正确 endpoint、header、payload，并从 SSE chunk 逐步产出中文文本。
-- Anthropic Provider 会构造正确 endpoint、header、payload；`thinking: true` 时包含 thinking 配置；从 `text_delta` 逐步产出中文文本。
-- Chat loop 会保存多轮历史、忽略空输入、支持中文退出命令，并在流式错误后继续循环。
-
-集成级验证：
-- 使用 fake provider 运行一次脚本化会话：输入中文问题，观察中文流式输出和历史传递。
-- 使用 fake HTTP transport 分别模拟 OpenAI 和 Claude 的 SSE 响应，不访问真实网络。
-- 运行测试套件并检查所有项目文本文件可按 UTF-8 解码。
+| 决策点 | 选择 | 理由 |
+|--------|------|------|
+| 语言 | Python 3.12+ | 项目既定（mewcode python 线）；3.12 的 typing/`asyncio.TaskGroup` 等更舒服 |
+| TUI 框架 | Textual | async-first，原生跑在 asyncio 上；CSS 样式、widget 丰富；与流式 SDK 天然契合 |
+| markdown 渲染 | Rich 的 `rich.markdown.Markdown` | Textual 内部即用 Rich；代码块语法高亮、列表、强调齐全；宽度自适应（N6） |
+| LLM 通信 | 官方 Python SDK（`anthropic` / `openai`） | 用户选定；SDK 内置 SSE 解析与 async 流，省去手写；`AsyncAnthropic` / `AsyncOpenAI` 即可 |
+| 协议抽象 | 统一 `Provider` Protocol + 两适配器 | 满足 F3/N3；上层不感知协议 |
+| 流式接入 TUI | `async for event in provider.stream(...)` 直跑在 Textual 的事件循环里 | Python async-first，无需 channel/Cmd 胶水；界面不阻塞（N1） |
+| 流式渲染策略 | 流式纯文本 + done 后 `rich.markdown.Markdown` 定型 | markdown 需完整块；增量渲染会抖动（F8） |
+| 渲染模型 | inline + `RichLog.write(...)` 追加（Claude Code 风格） | 完成消息持久写入 RichLog，可滚动回看；仅"输入框 + 正在流式的回复 + 状态栏"为动态重绘区 |
+| thinking | 仅 anthropic 生效（`thinking={"type":"enabled",...}`）；openai 忽略 | OpenAI reasoning 不经 chat.completions 返回正文；思考内容本就丢弃 |
+| 计时 | `turn_start = time.monotonic()` + `set_interval(0.1, ...)` 计算 elapsed | 自请求即计时，Textual 内置 timer 驱动（F12） |
+| provider 选择 | 单份直进 / 多份 `OptionList` 选择 | 满足 F2 |
+| 历史 | 进程内 `list[Message]`，单会话 | 满足 F6；不持久化 |
+| system prompt | 内置常量，适配器注入 | 满足 F4；conversation 保持纯 user/assistant |
+| 配置 | `.mewcode/config.yaml` + `pyyaml`；密钥入 `.gitignore` | 用户既定路径；N5 密钥安全 |
+| 错误处理 | 运行时错误经 `StreamEvent.err` 显示，不退出 | 满足 F11 |
+| 类型/质量 | `typing.Protocol` + `dataclass`；`ruff format` + `ruff check` + 可选 `mypy` | 简洁，无运行时依赖（vs pydantic）；ruff 一站式格式化/lint |
