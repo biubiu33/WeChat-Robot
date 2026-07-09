@@ -1,0 +1,15 @@
+providers:
+  - name: claude
+    protocol: anthropic
+    api_key: sk-ant-your-anthropic-key
+    model: claude-3-5-sonnet-latest
+    base_url: https://api.anthropic.com
+    thinking: true
+
+  # 取消注释后可添加 OpenAI 或兼容端点配置。
+  # - name: openai
+  #   protocol: openai
+  #   api_key: sk-your-openai-key
+  #   model: gpt-4o-mini
+  #   base_url: https://api.openai.com/v1
+  #   thinking: false
