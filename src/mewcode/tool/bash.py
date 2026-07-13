@@ -14,6 +14,8 @@ MAX_OUTPUT_CHARS = 30_000
 
 
 class BashTool:
+    read_only = False
+
     def name(self) -> str:
         return "bash"
 

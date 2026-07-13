@@ -11,6 +11,8 @@ MAX_CHARS = 256 * 1024
 
 
 class ReadFileTool:
+    read_only = True
+
     def name(self) -> str:
         return "read_file"
 

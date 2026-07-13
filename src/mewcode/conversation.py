@@ -37,5 +37,8 @@ class Conversation:
     def messages(self) -> list[Message]:
         return list(self._messages)
 
+    def last_role(self) -> str:
+        return self._messages[-1].role if self._messages else ""
+
     def __len__(self) -> int:
         return len(self._messages)

@@ -7,7 +7,14 @@ from typing import Any
 from mewcode.config import ProviderConfig
 from mewcode.prompt import SYSTEM_PROMPT
 
-from . import Message, StreamEvent, ToolCall, ToolDefinition, redact_secret
+from . import (
+    Message,
+    StreamEvent,
+    ToolCall,
+    ToolDefinition,
+    Usage,
+    redact_secret,
+)
 
 
 class OpenAIProvider:
@@ -37,11 +44,13 @@ class OpenAIProvider:
         self,
         msgs: list[Message],
         tools: list[ToolDefinition],
+        system_suffix: str = "",
     ) -> AsyncIterator[StreamEvent]:
         params: dict[str, Any] = {
             "model": self._model,
-            "messages": to_openai_messages(msgs),
+            "messages": to_openai_messages(msgs, system_suffix),
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             params["tools"] = to_openai_tools(tools)
@@ -51,6 +60,9 @@ class OpenAIProvider:
         try:
             stream = await self._client.chat.completions.create(**params)
             async for chunk in stream:
+                usage = _extract_usage(chunk)
+                if usage is not None:
+                    yield StreamEvent(usage=usage)
                 text = _extract_text_delta(chunk)
                 if text:
                     yield StreamEvent(text=text)
@@ -89,9 +101,14 @@ def to_openai_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     ]
 
 
-def to_openai_messages(msgs: list[Message]) -> list[dict[str, Any]]:
+def to_openai_messages(
+    msgs: list[Message], system_suffix: str = ""
+) -> list[dict[str, Any]]:
+    system = SYSTEM_PROMPT
+    if system_suffix:
+        system = f"{system}\n\n{system_suffix}"
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT}
+        {"role": "system", "content": system}
     ]
     for message in msgs:
         if message.role == "assistant" and message.tool_calls:
@@ -162,3 +179,15 @@ def _build_tool_calls(buffers: dict[int, dict[str, str]]) -> list[ToolCall]:
         )
         for _, buffer in sorted(buffers.items())
     ]
+
+
+def _extract_usage(chunk: Any) -> Usage | None:
+    usage = getattr(chunk, "usage", None)
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    if not isinstance(prompt_tokens, int) and not isinstance(completion_tokens, int):
+        return None
+    return Usage(
+        input_tokens=prompt_tokens if isinstance(prompt_tokens, int) else 0,
+        output_tokens=completion_tokens if isinstance(completion_tokens, int) else 0,
+    )

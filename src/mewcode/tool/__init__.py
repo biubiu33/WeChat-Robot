@@ -19,6 +19,8 @@ class Result:
 
 @runtime_checkable
 class Tool(Protocol):
+    read_only: bool
+
     def name(self) -> str: ...
 
     def description(self) -> str: ...
@@ -54,6 +56,21 @@ class Registry:
             )
             for name in self._order
         ]
+
+    def read_only_definitions(self) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name=name,
+                description=self._tools[name].description(),
+                input_schema=self._tools[name].parameters(),
+            )
+            for name in self._order
+            if getattr(self._tools[name], "read_only", False) is True
+        ]
+
+    def is_read_only(self, name: str) -> bool:
+        tool = self.get(name)
+        return bool(tool is not None and getattr(tool, "read_only", False))
 
     async def execute(
         self,

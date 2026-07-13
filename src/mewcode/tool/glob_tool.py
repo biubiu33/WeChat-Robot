@@ -10,6 +10,8 @@ MAX_MATCHES = 100
 
 
 class GlobTool:
+    read_only = True
+
     def name(self) -> str:
         return "glob"
 

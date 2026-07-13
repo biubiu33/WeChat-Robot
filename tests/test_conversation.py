@@ -47,3 +47,17 @@ def test_conversation_keeps_tool_round_in_order() -> None:
     assert len(messages[1].tool_calls) == 2
     assert len(messages[2].tool_results) == 2
     assert len(conv) == 4
+
+
+def test_conversation_reports_last_role() -> None:
+    conv = Conversation()
+    assert conv.last_role() == ""
+
+    conv.add_user("你好")
+    assert conv.last_role() == "user"
+
+    conv.add_tool_results([])
+    assert conv.last_role() == "tool"
+
+    conv.add_assistant("收到")
+    assert conv.last_role() == "assistant"

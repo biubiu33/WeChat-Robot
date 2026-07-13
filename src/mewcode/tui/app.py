@@ -12,6 +12,7 @@ from textual.containers import Container
 from textual.timer import Timer
 from textual.widgets import OptionList, RichLog, Static, TextArea
 
+from mewcode.agent import Mode
 from mewcode import __version__
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
@@ -84,7 +85,10 @@ class MewCodeApp(App):
     }
     """
 
-    BINDINGS = [("ctrl+c", "quit", "退出")]
+    BINDINGS = [
+        ("ctrl+c", "cancel_or_quit", "取消/退出"),
+        ("escape", "cancel_turn", "取消当前回合"),
+    ]
 
     def __init__(
         self,
@@ -99,11 +103,16 @@ class MewCodeApp(App):
         self.state = SessionState.SELECTING if len(providers) > 1 else SessionState.IDLE
         self.provider: Provider | None = None
         self.conv = Conversation()
+        self.mode = Mode.NORMAL
+        self.iter = 0
+        self.usage_in = 0
+        self.usage_out = 0
         self.cur_reply = ""
-        self.cur_tool: tuple[str, str] | None = None
+        self.cur_tools: list[tuple[str, str]] = []
         self.turn_start = 0.0
         self._stream_task: asyncio.Task[None] | None = None
         self._timer: Timer | None = None
+        self.turn_cancel: asyncio.Event | None = None
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -129,9 +138,7 @@ class MewCodeApp(App):
         if len(self.providers) == 1:
             self.provider = new_provider(self.providers[0])
             self.query_one("#selector").display = False
-            self.query_one("#statusbar", Static).update(
-                status_bar(self.provider.name, self.provider.model)
-            )
+            self.refresh_status()
             self.query_one("#input").focus()
         else:
             self.query_one("#main").display = False
@@ -158,16 +165,36 @@ class MewCodeApp(App):
             await self.action_quit()
             return
 
+        if text == "/plan":
+            self.mode = Mode.PLAN
+            self.query_one("#log", RichLog).write(
+                Text("● 已进入计划模式（只允许只读工具）", style="bold yellow")
+            )
+            text_area.text = ""
+            self.refresh_status()
+            text_area.focus()
+            return
+
         if self.provider is None:
             return
+
+        if text == "/do":
+            from mewcode.prompt import EXECUTE_DIRECTIVE
+
+            self.mode = Mode.NORMAL
+            text = EXECUTE_DIRECTIVE
 
         self.conv.add_user(text)
         self.query_one("#log", RichLog).write(user_block(text))
         text_area.text = ""
         text_area.read_only = True
         self.cur_reply = ""
+        self.cur_tools = []
+        self.iter = 0
+        self.turn_cancel = asyncio.Event()
         self.turn_start = time.monotonic()
         self.state = SessionState.STREAMING
+        self.refresh_status()
 
         from .stream import consume_stream, tick
 
@@ -178,6 +205,29 @@ class MewCodeApp(App):
         if self._stream_task is not None:
             self._stream_task.cancel()
         self.exit()
+
+    def action_cancel_or_quit(self) -> None:
+        if self.state is SessionState.STREAMING:
+            self.action_cancel_turn()
+            return
+        self.exit()
+
+    def action_cancel_turn(self) -> None:
+        if self.state is SessionState.STREAMING and self.turn_cancel is not None:
+            self.turn_cancel.set()
+
+    def refresh_status(self) -> None:
+        if self.provider is None:
+            return
+        self.query_one("#statusbar", Static).update(
+            status_bar(
+                self.provider.name,
+                self.provider.model,
+                self.mode,
+                self.usage_in,
+                self.usage_out,
+            )
+        )
 
     def watch_state(self, state: SessionState) -> None:
         try:

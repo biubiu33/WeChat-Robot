@@ -8,6 +8,8 @@ from . import Result, error_result, parse_arguments, require_string
 
 
 class EditFileTool:
+    read_only = False
+
     def name(self) -> str:
         return "edit_file"
 

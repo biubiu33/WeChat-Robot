@@ -3,9 +3,17 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from mewcode.llm import Message, ToolCall, ToolDefinition, ToolResult, redact_secret
+from mewcode.llm import (
+    Message,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+    Usage,
+    redact_secret,
+)
 from mewcode.llm.anthropic_provider import (
     AnthropicProvider,
+    _effective_system,
     _extract_text_delta as anthropic_text,
     _extract_tool_calls,
     _has_tool_history,
@@ -192,6 +200,16 @@ def test_anthropic_extracts_multiple_final_tool_calls() -> None:
     assert calls[0].input == '{"path": "a.py"}'
 
 
+def test_system_suffix_is_appended_for_both_protocols() -> None:
+    from mewcode.llm.openai_provider import to_openai_messages
+
+    suffix = "计划模式约束"
+    openai_messages = to_openai_messages([], suffix)
+
+    assert openai_messages[0]["content"].endswith(suffix)
+    assert _effective_system(suffix).endswith(suffix)
+
+
 def test_openai_stream_injects_tools_and_emits_complete_call() -> None:
     captured: dict[str, object] = {}
     chunks = [
@@ -212,6 +230,10 @@ def test_openai_stream_injects_tools_and_emits_complete_call() -> None:
                     )
                 )
             ]
+        ),
+        SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(prompt_tokens=12, completion_tokens=7),
         ),
         SimpleNamespace(
             choices=[
@@ -255,7 +277,9 @@ def test_openai_stream_injects_tools_and_emits_complete_call() -> None:
         return [
             event
             async for event in provider.stream(
-                [Message(role="user", content="读取")], [_definition()]
+                [Message(role="user", content="读取")],
+                [_definition()],
+                "计划模式",
             )
         ]
 
@@ -263,9 +287,12 @@ def test_openai_stream_injects_tools_and_emits_complete_call() -> None:
 
     assert captured["tools"] == to_openai_tools([_definition()])
     assert captured["tool_choice"] == "auto"
+    assert captured["stream_options"] == {"include_usage": True}
+    assert captured["messages"][0]["content"].endswith("计划模式")
     assert events[-2].tool_calls == [
         ToolCall("call-1", "read_file", '{"path":"a.py"}')
     ]
+    assert Usage(12, 7) in [event.usage for event in events]
     assert events[-1].done
 
 
@@ -289,7 +316,10 @@ def test_anthropic_stream_injects_tools_and_disables_thinking_for_followup() -> 
             return iterate()
 
         async def get_final_message(self):
-            return SimpleNamespace(content=[])
+            return SimpleNamespace(
+                content=[],
+                usage=SimpleNamespace(input_tokens=11, output_tokens=6),
+            )
 
     class FakeMessages:
         def stream(self, **params):
@@ -307,7 +337,9 @@ def test_anthropic_stream_injects_tools_and_disables_thinking_for_followup() -> 
         first = [
             event
             async for event in provider.stream(
-                [Message(role="user", content="读取")], [_definition()]
+                [Message(role="user", content="读取")],
+                [_definition()],
+                "计划模式",
             )
         ]
         followup = [
@@ -329,7 +361,9 @@ def test_anthropic_stream_injects_tools_and_disables_thinking_for_followup() -> 
     first, followup = asyncio.run(run_requests())
 
     assert captured[0]["tools"] == to_anthropic_tools([_definition()])
+    assert captured[0]["system"].endswith("计划模式")
     assert captured[0]["thinking"] == {"type": "enabled", "budget_tokens": 2048}
     assert "thinking" not in captured[1]
     assert captured[1]["messages"][-1]["content"][0]["type"] == "tool_result"
+    assert Usage(11, 6) in [event.usage for event in first]
     assert first[-1].done and followup[-1].done

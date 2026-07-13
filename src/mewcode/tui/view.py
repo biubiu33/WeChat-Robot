@@ -7,6 +7,8 @@ from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 
+from mewcode.agent import Mode
+
 
 def user_block(text: str) -> Text:
     return Text(f"● {text}", style="bold cyan")
@@ -21,19 +23,26 @@ def error_block(err: Exception) -> Text:
     return Text(f"● 错误: {err}", style="bold red")
 
 
-def streaming_block(reply: str, elapsed_seconds: int) -> Group:
+def streaming_block(reply: str, elapsed_seconds: int, iteration: int = 0) -> Group:
     body = reply or "等待模型响应..."
+    detail = f"Imagining... ({elapsed_seconds}s"
+    if iteration:
+        detail += f" · 第 {iteration} 轮"
+    detail += ")"
     return Group(
         Text(f"● {body}", style="green"),
-        Text(f"Imagining… ({elapsed_seconds}s)", style="dim"),
+        Text(detail, style="dim"),
     )
 
 
-def tool_running_block(name: str, args: str, elapsed_seconds: int) -> Group:
-    return Group(
-        tool_line(name, args),
-        Text(f"  Running... ({elapsed_seconds}s)", style="dim"),
-    )
+def tools_running_block(
+    tools: list[tuple[str, str]], elapsed_seconds: int
+) -> Group:
+    rows: list[Text] = []
+    for name, args in tools:
+        rows.append(tool_line(name, args))
+        rows.append(Text(f"  Running... ({elapsed_seconds}s)", style="dim"))
+    return Group(*rows)
 
 
 def tool_line(name: str, args: str) -> Text:
@@ -49,6 +58,10 @@ def tool_result_summary(result: str, is_error: bool) -> Text:
     body = "\n  ".join(summary) if summary else "(empty)"
     style = "red" if is_error else "dim"
     return Text(f"  -> {body}", style=style)
+
+
+def notice_block(text: str) -> Text:
+    return Text(f"● {text}", style="dim yellow")
 
 
 def _argument_preview(name: str, args: str) -> str:
@@ -71,12 +84,26 @@ def _argument_preview(name: str, args: str) -> str:
     return preview
 
 
-def status_bar(provider_name: str, model: str) -> Table:
+def status_bar(
+    provider_name: str,
+    model: str,
+    mode: Mode = Mode.NORMAL,
+    usage_in: int = 0,
+    usage_out: int = 0,
+) -> Table:
     table = Table.grid(expand=True)
     table.add_column(justify="left")
     table.add_column(justify="right")
-    table.add_row(f"Provider: {provider_name}", f"Model: {model}")
+    plan = " [PLAN]" if mode is Mode.PLAN else ""
+    usage = f"↑{_compact_tokens(usage_in)} ↓{_compact_tokens(usage_out)} tok"
+    table.add_row(f"Provider: {provider_name}{plan}", f"Model: {model}  {usage}")
     return table
+
+
+def _compact_tokens(value: int) -> str:
+    if value < 1_000:
+        return str(value)
+    return f"{value / 1_000:.1f}k"
 
 
 def selecting_status() -> Table:

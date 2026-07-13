@@ -44,6 +44,17 @@ def test_default_registry_exports_six_tools_in_stable_order() -> None:
     assert all(definition.input_schema["type"] == "object" for definition in definitions)
     assert registry.get("read_file") is not None
     assert registry.get("missing") is None
+    assert [definition.name for definition in registry.read_only_definitions()] == [
+        "read_file",
+        "glob",
+        "grep",
+    ]
+    assert registry.is_read_only("read_file")
+    assert registry.is_read_only("glob")
+    assert registry.is_read_only("grep")
+    assert not registry.is_read_only("write_file")
+    assert not registry.is_read_only("bash")
+    assert not registry.is_read_only("missing")
 
 
 def test_registry_rejects_duplicate_names() -> None:

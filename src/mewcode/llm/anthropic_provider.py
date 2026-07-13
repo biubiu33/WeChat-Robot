@@ -8,7 +8,14 @@ from typing import Any
 from mewcode.config import ProviderConfig
 from mewcode.prompt import SYSTEM_PROMPT
 
-from . import Message, StreamEvent, ToolCall, ToolDefinition, redact_secret
+from . import (
+    Message,
+    StreamEvent,
+    ToolCall,
+    ToolDefinition,
+    Usage,
+    redact_secret,
+)
 
 
 class AnthropicProvider:
@@ -39,11 +46,12 @@ class AnthropicProvider:
         self,
         msgs: list[Message],
         tools: list[ToolDefinition],
+        system_suffix: str = "",
     ) -> AsyncIterator[StreamEvent]:
         params: dict[str, Any] = {
             "model": self._model,
             "max_tokens": 4096,
-            "system": SYSTEM_PROMPT,
+            "system": _effective_system(system_suffix),
             "messages": to_anthropic_messages(msgs),
         }
         if tools:
@@ -61,6 +69,14 @@ class AnthropicProvider:
             calls = _extract_tool_calls(final_message)
             if calls:
                 yield StreamEvent(tool_calls=calls)
+            usage = getattr(final_message, "usage", None)
+            if usage is not None:
+                yield StreamEvent(
+                    usage=Usage(
+                        input_tokens=_usage_value(usage, "input_tokens"),
+                        output_tokens=_usage_value(usage, "output_tokens"),
+                    )
+                )
             yield StreamEvent(done=True)
         except asyncio.CancelledError:
             raise
@@ -154,3 +170,14 @@ def _extract_tool_calls(final_message: Any) -> list[ToolCall]:
 
 def _has_tool_history(msgs: list[Message]) -> bool:
     return any(message.tool_calls or message.tool_results for message in msgs)
+
+
+def _effective_system(system_suffix: str) -> str:
+    if not system_suffix:
+        return SYSTEM_PROMPT
+    return f"{SYSTEM_PROMPT}\n\n{system_suffix}"
+
+
+def _usage_value(usage: Any, field: str) -> int:
+    value = getattr(usage, field, 0)
+    return value if isinstance(value, int) else 0

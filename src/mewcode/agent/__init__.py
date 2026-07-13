@@ -1,25 +1,41 @@
+"""ReAct Agent Loop orchestration."""
+
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 
 from mewcode.conversation import Conversation
-from mewcode.llm import Provider, ToolCall, ToolResult
-from mewcode.tool import DEFAULT_TIMEOUT, Registry
+from mewcode.llm import Provider, ToolCall, ToolDefinition, ToolResult, Usage as LlmUsage
+from mewcode.prompt import PLAN_MODE_REMINDER
+from mewcode.tool import DEFAULT_TIMEOUT, Registry, Result, error_result
 
-SINGLE_ROUND_LIMIT_MESSAGE = (
-    "本轮工具执行已达到单轮上限，新的工具调用未执行。请在下一条消息中继续。"
-)
-REQUEST_ERROR_HISTORY_MESSAGE = "上一轮模型请求失败，未生成可用答复。"
-FOLLOWUP_ERROR_HISTORY_MESSAGE = "工具已执行，但模型续答失败。"
+MAX_ITERATIONS = 25
+MAX_UNKNOWN_RUN = 3
+
+NOTICE_MAX_ITER = "（已达最大迭代轮数 25，自动停止；可继续发消息推进。）"
+NOTICE_UNKNOWN_TOOLS = "（连续多轮只请求到未注册的工具，自动停止。）"
+NOTICE_STREAM_ERR = "（请求出错，本轮已中断。）"
+NOTICE_CANCELLED = "（已取消。）"
 EMPTY_RESPONSE_MESSAGE = "模型未返回文本内容。"
 
 
 class Phase(Enum):
     START = "start"
     END = "end"
+
+
+class Mode(IntEnum):
+    NORMAL = 0
+    PLAN = 1
+
+
+@dataclass(frozen=True)
+class Usage:
+    input: int = 0
+    output: int = 0
 
 
 @dataclass(frozen=True)
@@ -35,7 +51,19 @@ class ToolEvent:
 class Event:
     text: str = ""
     tool: ToolEvent | None = None
+    usage: Usage | None = None
+    iter: int = 0
+    notice: str = ""
     done: bool = False
+    err: Exception | None = None
+
+
+@dataclass(frozen=True)
+class _StreamOutcome:
+    text: str
+    calls: list[ToolCall]
+    usage: LlmUsage | None
+    ok: bool
     err: Exception | None = None
 
 
@@ -44,97 +72,360 @@ class Agent:
         self._provider = provider
         self._registry = registry
 
-    async def run(self, conv: Conversation) -> AsyncIterator[Event]:
-        definitions = self._registry.definitions()
-        first_text = ""
-        calls: list[ToolCall] = []
+    async def run(
+        self,
+        conv: Conversation,
+        mode: Mode = Mode.NORMAL,
+        cancel: asyncio.Event | None = None,
+    ) -> AsyncIterator[Event]:
+        cancel_event = cancel if cancel is not None else asyncio.Event()
+        definitions, suffix = self._mode_request_options(mode)
+        unknown_run = 0
 
+        for iteration in range(1, MAX_ITERATIONS + 1):
+            if cancel_event.is_set():
+                self._finish_cancelled(conv)
+                yield Event(notice=NOTICE_CANCELLED)
+                return
+            yield Event(iter=iteration)
+
+            outcome: _StreamOutcome | None = None
+            async for item in self._stream_once(
+                conv, definitions, suffix, cancel_event
+            ):
+                if isinstance(item, Event):
+                    yield item
+                else:
+                    outcome = item
+
+            assert outcome is not None
+            if not outcome.ok:
+                if cancel_event.is_set():
+                    self._finish_cancelled(conv)
+                    yield Event(notice=NOTICE_CANCELLED)
+                else:
+                    self._ensure_assistant_tail(conv, NOTICE_STREAM_ERR)
+                return
+
+            if outcome.usage is not None:
+                yield Event(
+                    usage=Usage(
+                        input=outcome.usage.input_tokens,
+                        output=outcome.usage.output_tokens,
+                    )
+                )
+
+            if not outcome.calls:
+                final_text = self._ensure_final(outcome.text)
+                if not outcome.text.strip():
+                    yield Event(text=final_text)
+                conv.add_assistant(final_text)
+                yield Event(done=True)
+                return
+
+            conv.add_assistant_with_tool_calls(outcome.text, outcome.calls)
+            unknown_run = unknown_run + 1 if self._all_unknown(outcome.calls) else 0
+
+            execution: _ExecutionOutcome | None = None
+            async for item in self._execute_batched(
+                outcome.calls,
+                cancel_event,
+                read_only_only=mode is Mode.PLAN,
+            ):
+                if isinstance(item, Event):
+                    yield item
+                else:
+                    execution = item
+
+            assert execution is not None
+            conv.add_tool_results(execution.results)
+            if not execution.completed:
+                self._finish_cancelled(conv)
+                yield Event(notice=NOTICE_CANCELLED)
+                return
+
+            if unknown_run >= MAX_UNKNOWN_RUN:
+                yield Event(notice=NOTICE_UNKNOWN_TOOLS)
+                self._ensure_assistant_tail(conv, NOTICE_UNKNOWN_TOOLS)
+                yield Event(done=True)
+                return
+
+        yield Event(notice=NOTICE_MAX_ITER)
+        self._ensure_assistant_tail(conv, NOTICE_MAX_ITER)
+        yield Event(done=True)
+
+    async def _stream_once(
+        self,
+        conv: Conversation,
+        definitions: list[ToolDefinition],
+        suffix: str,
+        cancel: asyncio.Event,
+    ) -> AsyncIterator[Event | _StreamOutcome]:
+        text = ""
+        calls: list[ToolCall] = []
+        usage: LlmUsage | None = None
+        stream = self._provider.stream(conv.messages(), definitions, suffix)
+        iterator = stream.__aiter__()
+        next_event: asyncio.Task[object] | None = None
+        cancelled: asyncio.Task[bool] | None = None
         try:
-            async for event in self._provider.stream(conv.messages(), definitions):
+            while True:
+                if cancel.is_set():
+                    yield _StreamOutcome("", [], None, False)
+                    return
+                next_event = asyncio.create_task(anext(iterator))
+                cancelled = asyncio.create_task(cancel.wait())
+                done, _ = await asyncio.wait(
+                    {next_event, cancelled}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if cancelled in done:
+                    if not next_event.done():
+                        next_event.cancel()
+                        await asyncio.gather(next_event, return_exceptions=True)
+                    yield _StreamOutcome("", [], None, False)
+                    return
+                try:
+                    event = await next_event
+                except StopAsyncIteration:
+                    break
                 if event.err is not None:
-                    conv.add_assistant(REQUEST_ERROR_HISTORY_MESSAGE)
                     yield Event(err=event.err)
+                    yield _StreamOutcome("", [], None, False, event.err)
                     return
                 if event.text:
-                    first_text += event.text
+                    text += event.text
                     yield Event(text=event.text)
                 if event.tool_calls:
                     calls.extend(event.tool_calls)
+                if event.usage is not None:
+                    usage = event.usage
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            conv.add_assistant(REQUEST_ERROR_HISTORY_MESSAGE)
             yield Event(err=exc)
+            yield _StreamOutcome("", [], None, False, exc)
             return
+        finally:
+            for task in (next_event, cancelled):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (next_event, cancelled) if task is not None),
+                return_exceptions=True,
+            )
+            aclose = getattr(iterator, "aclose", None)
+            if callable(aclose):
+                await aclose()
+        yield _StreamOutcome(text, calls, usage, True)
 
-        if not calls:
-            if not first_text.strip():
-                first_text = EMPTY_RESPONSE_MESSAGE
-                yield Event(text=first_text)
-            conv.add_assistant(first_text)
-            yield Event(done=True)
-            return
+    async def _execute_batched(
+        self,
+        calls: list[ToolCall],
+        cancel: asyncio.Event,
+        *,
+        read_only_only: bool,
+    ) -> AsyncIterator[Event | _ExecutionOutcome]:
+        results: list[ToolResult | None] = [None] * len(calls)
+        index = 0
 
-        conv.add_assistant_with_tool_calls(first_text, calls)
-        results: list[ToolResult] = []
-        for call in calls:
-            display_args = self._redact(call.input)
-            yield Event(
-                tool=ToolEvent(name=call.name, args=display_args, phase=Phase.START)
-            )
-            result = await self._registry.execute(
-                call.name, call.input, timeout=DEFAULT_TIMEOUT
-            )
-            safe_result = self._redact(result.content)
-            yield Event(
-                tool=ToolEvent(
-                    name=call.name,
-                    args=display_args,
-                    phase=Phase.END,
-                    result=safe_result,
-                    is_error=result.is_error,
-                )
-            )
-            results.append(
-                ToolResult(
-                    tool_call_id=call.id,
-                    content=safe_result,
-                    is_error=result.is_error,
-                )
-            )
-        conv.add_tool_results(results)
+        while index < len(calls):
+            if cancel.is_set():
+                self._cancel_remaining(calls, results, index)
+                yield _ExecutionOutcome(self._finalize_results(results), False)
+                return
 
-        final_text = ""
-        second_calls: list[ToolCall] = []
-        try:
-            async for event in self._provider.stream(conv.messages(), definitions):
-                if event.err is not None:
-                    conv.add_assistant(FOLLOWUP_ERROR_HISTORY_MESSAGE)
-                    yield Event(err=event.err)
+            if read_only_only and not self._registry.is_read_only(calls[index].name):
+                call = calls[index]
+                yield Event(tool=self._tool_start(call))
+                result = self._plan_restricted_result(call)
+                results[index] = result
+                yield Event(tool=self._tool_end(call, result))
+                index += 1
+                continue
+
+            if self._registry.is_read_only(calls[index].name):
+                end = index + 1
+                while end < len(calls) and self._registry.is_read_only(calls[end].name):
+                    end += 1
+                for call in calls[index:end]:
+                    yield Event(tool=self._tool_start(call))
+                batch = await self._execute_read_batch(calls, results, index, end, cancel)
+                for call_index in range(index, end):
+                    yield Event(tool=self._tool_end(calls[call_index], results[call_index]))
+                if not batch:
+                    self._cancel_remaining(calls, results, end)
+                    yield _ExecutionOutcome(self._finalize_results(results), False)
                     return
-                if event.text:
-                    final_text += event.text
-                    yield Event(text=event.text)
-                if event.tool_calls:
-                    second_calls.extend(event.tool_calls)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            conv.add_assistant(FOLLOWUP_ERROR_HISTORY_MESSAGE)
-            yield Event(err=exc)
-            return
+                index = end
+                continue
 
-        if second_calls or not final_text.strip():
-            separator = "\n\n" if final_text.strip() else ""
-            notice = separator + SINGLE_ROUND_LIMIT_MESSAGE
-            final_text += notice
-            yield Event(text=notice)
-        conv.add_assistant(final_text)
-        yield Event(done=True)
+            call = calls[index]
+            yield Event(tool=self._tool_start(call))
+            result, completed = await self._execute_one(call, cancel)
+            results[index] = result
+            yield Event(tool=self._tool_end(call, result))
+            if not completed:
+                self._cancel_remaining(calls, results, index + 1)
+                yield _ExecutionOutcome(self._finalize_results(results), False)
+                return
+            index += 1
+
+        yield _ExecutionOutcome(self._finalize_results(results), True)
+
+    async def _execute_read_batch(
+        self,
+        calls: list[ToolCall],
+        results: list[ToolResult | None],
+        start: int,
+        end: int,
+        cancel: asyncio.Event,
+    ) -> bool:
+        tasks = [
+            asyncio.create_task(self._execute_one(calls[index], cancel))
+            for index in range(start, end)
+        ]
+        completed = True
+        try:
+            batch_results = await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        for offset, (result, item_completed) in enumerate(batch_results):
+            results[start + offset] = result
+            completed = completed and item_completed
+        return completed
+
+    async def _execute_one(
+        self,
+        call: ToolCall,
+        cancel: asyncio.Event,
+    ) -> tuple[ToolResult, bool]:
+        if cancel.is_set():
+            return self._cancelled_result(call), False
+
+        execution = asyncio.create_task(
+            self._registry.execute(call.name, call.input, timeout=DEFAULT_TIMEOUT)
+        )
+        cancelled = asyncio.create_task(cancel.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {execution, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done:
+                if not execution.done():
+                    execution.cancel()
+                    await asyncio.gather(execution, return_exceptions=True)
+                return self._cancelled_result(call), False
+            result = await execution
+            return self._to_tool_result(call, result), True
+        except asyncio.CancelledError:
+            execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+            raise
+        finally:
+            if not cancelled.done():
+                cancelled.cancel()
+            await asyncio.gather(cancelled, return_exceptions=True)
+
+    def _mode_request_options(self, mode: Mode) -> tuple[list[ToolDefinition], str]:
+        if mode is Mode.PLAN:
+            return self._registry.read_only_definitions(), PLAN_MODE_REMINDER
+        return self._registry.definitions(), ""
+
+    def _all_unknown(self, calls: list[ToolCall]) -> bool:
+        return all(self._registry.get(call.name) is None for call in calls)
+
+    def _tool_start(self, call: ToolCall) -> ToolEvent:
+        return ToolEvent(
+            name=call.name,
+            args=self._redact(call.input),
+            phase=Phase.START,
+        )
+
+    def _tool_end(
+        self, call: ToolCall, result: ToolResult | None
+    ) -> ToolEvent:
+        tool_result = result if result is not None else self._cancelled_result(call)
+        return ToolEvent(
+            name=call.name,
+            args=self._redact(call.input),
+            phase=Phase.END,
+            result=tool_result.content,
+            is_error=tool_result.is_error,
+        )
+
+    def _to_tool_result(self, call: ToolCall, result: Result) -> ToolResult:
+        return ToolResult(
+            tool_call_id=call.id,
+            content=self._redact(result.content),
+            is_error=result.is_error,
+        )
+
+    def _cancelled_result(self, call: ToolCall) -> ToolResult:
+        return ToolResult(call.id, NOTICE_CANCELLED, is_error=True)
+
+    def _plan_restricted_result(self, call: ToolCall) -> ToolResult:
+        result = error_result(
+            "plan_mode_restricted",
+            f"计划模式只允许只读工具，未执行: {call.name}",
+        )
+        return self._to_tool_result(call, result)
+
+    def _cancel_remaining(
+        self,
+        calls: list[ToolCall],
+        results: list[ToolResult | None],
+        start: int,
+    ) -> None:
+        for index in range(start, len(calls)):
+            if results[index] is None:
+                results[index] = self._cancelled_result(calls[index])
+
+    def _finalize_results(
+        self, results: list[ToolResult | None]
+    ) -> list[ToolResult]:
+        return [
+            result
+            if result is not None
+            else ToolResult("", NOTICE_CANCELLED, is_error=True)
+            for result in results
+        ]
+
+    def _ensure_final(self, text: str) -> str:
+        return text if text.strip() else EMPTY_RESPONSE_MESSAGE
+
+    def _ensure_assistant_tail(self, conv: Conversation, fallback: str) -> None:
+        if conv.last_role() != "assistant":
+            conv.add_assistant(fallback)
+
+    def _finish_cancelled(self, conv: Conversation) -> None:
+        self._ensure_assistant_tail(conv, NOTICE_CANCELLED)
 
     def _redact(self, text: str) -> str:
         redact = getattr(self._provider, "redact", None)
         return redact(text) if callable(redact) else text
 
 
-__all__ = ["Agent", "Event", "Phase", "ToolEvent"]
+@dataclass(frozen=True)
+class _ExecutionOutcome:
+    results: list[ToolResult]
+    completed: bool
+
+
+__all__ = [
+    "Agent",
+    "Event",
+    "MAX_ITERATIONS",
+    "MAX_UNKNOWN_RUN",
+    "Mode",
+    "NOTICE_CANCELLED",
+    "NOTICE_MAX_ITER",
+    "NOTICE_STREAM_ERR",
+    "NOTICE_UNKNOWN_TOOLS",
+    "Phase",
+    "ToolEvent",
+    "Usage",
+]
