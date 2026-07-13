@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from .llm import Message
+from collections.abc import Sequence
+
+from .llm import (
+    ROLE_ASSISTANT,
+    ROLE_TOOL,
+    ROLE_USER,
+    Message,
+    ToolCall,
+    ToolResult,
+)
 
 
 class Conversation:
@@ -8,10 +17,25 @@ class Conversation:
         self._messages: list[Message] = []
 
     def add_user(self, text: str) -> None:
-        self._messages.append(Message(role="user", content=text))
+        self._messages.append(Message(role=ROLE_USER, content=text))
 
     def add_assistant(self, text: str) -> None:
-        self._messages.append(Message(role="assistant", content=text))
+        self._messages.append(Message(role=ROLE_ASSISTANT, content=text))
+
+    def add_assistant_with_tool_calls(
+        self, text: str, calls: Sequence[ToolCall]
+    ) -> None:
+        self._messages.append(
+            Message(role=ROLE_ASSISTANT, content=text, tool_calls=list(calls))
+        )
+
+    def add_tool_results(self, results: Sequence[ToolResult]) -> None:
+        self._messages.append(
+            Message(role=ROLE_TOOL, tool_results=list(results))
+        )
 
     def messages(self) -> list[Message]:
         return list(self._messages)
+
+    def __len__(self) -> int:
+        return len(self._messages)

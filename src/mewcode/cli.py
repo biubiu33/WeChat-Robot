@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 
+from mewcode import __version__
 from mewcode.config import ConfigError, discover_config_path, load
+from mewcode.tool import new_default_registry
 
 
 def main() -> None:
@@ -16,7 +18,11 @@ def main() -> None:
     try:
         from mewcode.tui.app import MewCodeApp
 
-        MewCodeApp(cfg.providers).run()
+        MewCodeApp(
+            cfg.providers,
+            version=__version__,
+            registry=new_default_registry(),
+        ).run()
     except KeyboardInterrupt:
         raise SystemExit(0) from None
     except Exception as exc:

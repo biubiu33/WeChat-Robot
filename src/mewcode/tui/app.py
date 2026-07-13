@@ -17,6 +17,7 @@ from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
 from mewcode.llm import Provider, new_provider
 from mewcode.prompt import render_banner
+from mewcode.tool import Registry, new_default_registry
 
 from .view import selecting_status, status_bar, user_block
 
@@ -85,20 +86,28 @@ class MewCodeApp(App):
 
     BINDINGS = [("ctrl+c", "quit", "退出")]
 
-    def __init__(self, providers: list[ProviderConfig]) -> None:
+    def __init__(
+        self,
+        providers: list[ProviderConfig],
+        version: str = __version__,
+        registry: Registry | None = None,
+    ) -> None:
         super().__init__()
         self.providers = providers
+        self.version = version
+        self.registry = registry if registry is not None else new_default_registry()
         self.state = SessionState.SELECTING if len(providers) > 1 else SessionState.IDLE
         self.provider: Provider | None = None
         self.conv = Conversation()
         self.cur_reply = ""
+        self.cur_tool: tuple[str, str] | None = None
         self.turn_start = 0.0
         self._stream_task: asyncio.Task[None] | None = None
         self._timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Static(render_banner(__version__, os.getcwd()), id="selector-banner"),
+            Static(render_banner(self.version, os.getcwd()), id="selector-banner"),
             Static(Text("选择本次会话使用的 provider", style="bold")),
             OptionList(
                 *[f"{provider.name} ({provider.model})" for provider in self.providers],
@@ -115,7 +124,7 @@ class MewCodeApp(App):
         )
 
     async def on_mount(self) -> None:
-        self.query_one("#log", RichLog).write(render_banner(__version__, os.getcwd()))
+        self.query_one("#log", RichLog).write(render_banner(self.version, os.getcwd()))
 
         if len(self.providers) == 1:
             self.provider = new_provider(self.providers[0])

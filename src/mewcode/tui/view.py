@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.table import Table
@@ -25,6 +27,48 @@ def streaming_block(reply: str, elapsed_seconds: int) -> Group:
         Text(f"● {body}", style="green"),
         Text(f"Imagining… ({elapsed_seconds}s)", style="dim"),
     )
+
+
+def tool_running_block(name: str, args: str, elapsed_seconds: int) -> Group:
+    return Group(
+        tool_line(name, args),
+        Text(f"  Running... ({elapsed_seconds}s)", style="dim"),
+    )
+
+
+def tool_line(name: str, args: str) -> Text:
+    return Text(f"● {name}({_argument_preview(name, args)})", style="bold cyan")
+
+
+def tool_result_summary(result: str, is_error: bool) -> Text:
+    lines = result.splitlines()
+    truncated = len(lines) > 8
+    summary = lines[:8]
+    if truncated:
+        summary.append("[truncated]")
+    body = "\n  ".join(summary) if summary else "(empty)"
+    style = "red" if is_error else "dim"
+    return Text(f"  -> {body}", style=style)
+
+
+def _argument_preview(name: str, args: str) -> str:
+    try:
+        values = json.loads(args or "{}")
+    except json.JSONDecodeError:
+        values = {}
+    key = {
+        "read_file": "path",
+        "write_file": "path",
+        "edit_file": "path",
+        "bash": "command",
+        "glob": "pattern",
+        "grep": "pattern",
+    }.get(name)
+    value = values.get(key, "") if isinstance(values, dict) and key else ""
+    preview = str(value).replace("\r", " ").replace("\n", " ")
+    if len(preview) > 100:
+        preview = preview[:97] + "..."
+    return preview
 
 
 def status_bar(provider_name: str, model: str) -> Table:
