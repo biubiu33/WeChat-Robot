@@ -57,6 +57,16 @@ def test_default_registry_exports_six_tools_in_stable_order() -> None:
     assert not registry.is_read_only("missing")
 
 
+def test_tool_descriptions_reinforce_specialized_tool_rules() -> None:
+    registry = new_default_registry()
+    edit_file = registry.get("edit_file")
+    bash = registry.get("bash")
+
+    assert edit_file is not None and bash is not None
+    assert "先使用 read_file" in edit_file.description()
+    assert "优先使用 read_file、glob、grep" in bash.description()
+
+
 def test_registry_rejects_duplicate_names() -> None:
     registry = Registry()
     tool = new_default_registry().get("read_file")

@@ -26,7 +26,7 @@ async def consume_stream(app: MewCodeApp) -> None:
         return
 
     try:
-        agent = Agent(app.provider, app.registry)
+        agent = Agent(app.provider, app.registry, app.version)
         cancel = app.turn_cancel if app.turn_cancel is not None else asyncio.Event()
         saw_error = False
         async for event in agent.run(app.conv, app.mode, cancel):

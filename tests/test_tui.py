@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 from rich.console import Console
 from mewcode.config import ProviderConfig
 from mewcode.agent import Mode
-from mewcode.llm import Message, StreamEvent, ToolDefinition, Usage
+from mewcode.llm import Request, StreamEvent, Usage
 from mewcode.tool import new_default_registry
 from mewcode.tui.app import MewCodeApp, SessionState
 from mewcode.tui.view import status_bar, tool_line, tool_result_summary
@@ -32,14 +32,11 @@ class FakeProvider:
     def __init__(self) -> None:
         self.requests = 0
 
-    async def stream(
-        self,
-        msgs: list[Message],
-        tools: list[ToolDefinition],
-        system_suffix: str = "",
-    ) -> AsyncIterator[StreamEvent]:
+    async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
         self.requests += 1
-        assert len(tools) == 6
+        assert len(req.tools) == 6
+        assert req.system.stable
+        assert "环境信息" in req.system.environment
         yield StreamEvent(text=f"回复 {self.requests}")
         yield StreamEvent(usage=Usage(10, 5))
         yield StreamEvent(done=True)
@@ -117,7 +114,7 @@ async def test_tui_plan_and_do_switch_mode_and_use_directive() -> None:
 @async_test
 async def test_tui_escape_cancels_streaming_turn_without_exiting() -> None:
     class BlockingProvider(FakeProvider):
-        async def stream(self, msgs, tools, system_suffix=""):
+        async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
             self.requests += 1
             await asyncio.sleep(5)
             yield StreamEvent(text="不应出现")
@@ -149,7 +146,7 @@ async def test_tui_escape_cancels_streaming_turn_without_exiting() -> None:
 @async_test
 async def test_tui_provider_error_keeps_conversation_valid_and_recovers() -> None:
     class ErrorProvider(FakeProvider):
-        async def stream(self, msgs, tools, system_suffix=""):
+        async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
             self.requests += 1
             yield StreamEvent(err=RuntimeError("network"))
 

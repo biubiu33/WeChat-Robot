@@ -20,7 +20,11 @@ class BashTool:
         return "bash"
 
     def description(self) -> str:
-        return "在 MewCode 启动目录执行 shell 命令，返回输出和退出码。"
+        return (
+            "在 MewCode 启动目录执行 shell 命令，返回输出和退出码。"
+            "读取文件、查找文件或搜索内容时应优先使用 read_file、glob、grep，"
+            "不要用 bash 拼凑这些专用操作。"
+        )
 
     def parameters(self) -> dict[str, Any]:
         return {

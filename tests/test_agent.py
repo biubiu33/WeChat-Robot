@@ -20,8 +20,7 @@ from mewcode.agent import (
     Phase,
 )
 from mewcode.conversation import Conversation
-from mewcode.llm import Message, StreamEvent, ToolCall, ToolDefinition, Usage
-from mewcode.prompt import PLAN_MODE_REMINDER
+from mewcode.llm import Request, StreamEvent, ToolCall, ToolDefinition, Usage
 from mewcode.tool import Registry, Result, new_default_registry
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -41,18 +40,20 @@ class FakeProvider:
 
     def __init__(self, scripts: list[list[StreamEvent]]) -> None:
         self.scripts = scripts
-        self.requests: list[tuple[list[Message], list[ToolDefinition], str]] = []
+        self.requests: list[Request] = []
 
     def redact(self, text: str) -> str:
         return text.replace("secret-key", "***")
 
-    async def stream(
-        self,
-        msgs: list[Message],
-        tools: list[ToolDefinition],
-        system_suffix: str = "",
-    ) -> AsyncIterator[StreamEvent]:
-        self.requests.append((list(msgs), list(tools), system_suffix))
+    async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
+        self.requests.append(
+            Request(
+                messages=list(req.messages),
+                tools=list(req.tools),
+                system=req.system,
+                reminder=req.reminder,
+            )
+        )
         index = len(self.requests) - 1
         for event in self.scripts[index]:
             yield event
@@ -63,8 +64,8 @@ class RepeatingToolProvider(FakeProvider):
         super().__init__([])
         self.call = call
 
-    async def stream(self, msgs, tools, system_suffix=""):
-        self.requests.append((list(msgs), list(tools), system_suffix))
+    async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
+        self.requests.append(req)
         yield StreamEvent(tool_calls=[self.call], usage=Usage(3, 2))
         yield StreamEvent(done=True)
 
@@ -128,7 +129,7 @@ async def test_react_loop_runs_multiple_rounds_and_reports_events() -> None:
             [
                 StreamEvent(text="先读取。"),
                 StreamEvent(tool_calls=[call]),
-                StreamEvent(usage=Usage(10, 4)),
+                StreamEvent(usage=Usage(10, 4, cache_write=6, cache_read=2)),
                 StreamEvent(done=True),
             ],
             [
@@ -149,7 +150,7 @@ async def test_react_loop_runs_multiple_rounds_and_reports_events() -> None:
     assert len(provider.requests) == 2
     assert [event.iter for event in events if event.iter] == [1, 2]
     assert [event.usage for event in events if event.usage] == [
-        agent_module.Usage(10, 4),
+        agent_module.Usage(10, 4, 6, 2),
         agent_module.Usage(20, 3),
     ]
     assert [event.tool.phase for event in events if event.tool] == [
@@ -305,7 +306,7 @@ async def test_cancel_records_cancelled_results_and_allows_followup() -> None:
 
 
 @async_test
-async def test_plan_mode_only_sends_read_only_tools_and_suffix() -> None:
+async def test_plan_mode_sends_read_only_tools_and_dynamic_reminder() -> None:
     provider = FakeProvider([[StreamEvent(text="计划如下"), StreamEvent(done=True)]])
     conv = Conversation()
     conv.add_user("制定计划")
@@ -315,13 +316,47 @@ async def test_plan_mode_only_sends_read_only_tools_and_suffix() -> None:
     )
 
     assert events[-1].done
-    _, definitions, suffix = provider.requests[0]
-    assert [definition.name for definition in definitions] == [
+    request = provider.requests[0]
+    assert [definition.name for definition in request.tools] == [
         "read_file",
         "glob",
         "grep",
     ]
-    assert suffix == PLAN_MODE_REMINDER
+    assert request.system.stable
+    assert "环境信息" in request.system.environment
+    assert request.reminder.startswith("<system-reminder>")
+    assert "read_file、glob、grep" in request.reminder
+
+
+@async_test
+async def test_plan_reminder_frequency_and_history_are_isolated() -> None:
+    calls = [
+        ToolCall(f"call-{index}", "read_file", "{}") for index in range(1, 5)
+    ]
+    provider = FakeProvider(
+        [
+            [StreamEvent(tool_calls=[call]), StreamEvent(done=True)]
+            for call in calls
+        ]
+        + [[StreamEvent(text="计划完成"), StreamEvent(done=True)]]
+    )
+    registry = Registry()
+    registry.register(RecordingTool("read_file", [], read_only=True))
+    conv = Conversation()
+    conv.add_user("请调研并制定计划")
+
+    events = await collect(Agent(provider, registry), conv, mode=Mode.PLAN)
+
+    assert events[-1].done
+    assert len(provider.requests) == 5
+    assert "read_file、glob、grep" in provider.requests[0].reminder
+    assert "read_file、glob、grep" not in provider.requests[1].reminder
+    assert "read_file、glob、grep" not in provider.requests[3].reminder
+    assert "read_file、glob、grep" in provider.requests[4].reminder
+    assert provider.requests[0].system.stable == provider.requests[4].system.stable
+    assert all(
+        "system-reminder" not in message.content for message in conv.messages()
+    )
 
 
 @async_test

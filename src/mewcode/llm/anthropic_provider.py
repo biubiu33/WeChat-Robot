@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from mewcode.config import ProviderConfig
-from mewcode.prompt import SYSTEM_PROMPT
 
 from . import (
     Message,
+    Request,
     StreamEvent,
     ToolCall,
     ToolDefinition,
@@ -44,19 +44,20 @@ class AnthropicProvider:
 
     async def stream(
         self,
-        msgs: list[Message],
-        tools: list[ToolDefinition],
-        system_suffix: str = "",
+        req: Request,
     ) -> AsyncIterator[StreamEvent]:
+        messages = to_anthropic_messages(req.messages)
+        if req.reminder:
+            _append_reminder(messages, req.reminder)
         params: dict[str, Any] = {
             "model": self._model,
             "max_tokens": 4096,
-            "system": _effective_system(system_suffix),
-            "messages": to_anthropic_messages(msgs),
+            "system": to_anthropic_system(req),
+            "messages": messages,
         }
-        if tools:
-            params["tools"] = to_anthropic_tools(tools)
-        if self._thinking and not _has_tool_history(msgs):
+        if req.tools:
+            params["tools"] = to_anthropic_tools(req.tools)
+        if self._thinking and not _has_tool_history(req.messages):
             params["thinking"] = {"type": "enabled", "budget_tokens": 2048}
 
         try:
@@ -75,6 +76,10 @@ class AnthropicProvider:
                     usage=Usage(
                         input_tokens=_usage_value(usage, "input_tokens"),
                         output_tokens=_usage_value(usage, "output_tokens"),
+                        cache_write=_usage_value(
+                            usage, "cache_creation_input_tokens"
+                        ),
+                        cache_read=_usage_value(usage, "cache_read_input_tokens"),
                     )
                 )
             yield StreamEvent(done=True)
@@ -105,6 +110,22 @@ def to_anthropic_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         }
         for tool in tools
     ]
+
+
+def to_anthropic_system(req: Request) -> list[dict[str, Any]]:
+    """构造稳定缓存块和动态环境块，二者绝不混合。"""
+    blocks: list[dict[str, Any]] = []
+    if req.system.stable:
+        blocks.append(
+            {
+                "type": "text",
+                "text": req.system.stable,
+                "cache_control": {"type": "ephemeral"},
+            }
+        )
+    if req.system.environment:
+        blocks.append({"type": "text", "text": req.system.environment})
+    return blocks
 
 
 def to_anthropic_messages(msgs: list[Message]) -> list[dict[str, Any]]:
@@ -152,6 +173,23 @@ def to_anthropic_messages(msgs: list[Message]) -> list[dict[str, Any]]:
     return messages
 
 
+def _append_reminder(messages: list[dict[str, Any]], reminder: str) -> None:
+    """将临时提醒并入末尾用户回合，避免 Anthropic 连续 user 角色。"""
+    block = {"type": "text", "text": reminder}
+    if messages and messages[-1].get("role") == "user":
+        content = messages[-1].get("content", "")
+        if isinstance(content, str):
+            blocks = [{"type": "text", "text": content}] if content else []
+        elif isinstance(content, list):
+            blocks = list(content)
+        else:
+            blocks = []
+        blocks.append(block)
+        messages[-1]["content"] = blocks
+        return
+    messages.append({"role": "user", "content": [block]})
+
+
 def _extract_tool_calls(final_message: Any) -> list[ToolCall]:
     calls: list[ToolCall] = []
     for block in getattr(final_message, "content", None) or []:
@@ -170,12 +208,6 @@ def _extract_tool_calls(final_message: Any) -> list[ToolCall]:
 
 def _has_tool_history(msgs: list[Message]) -> bool:
     return any(message.tool_calls or message.tool_results for message in msgs)
-
-
-def _effective_system(system_suffix: str) -> str:
-    if not system_suffix:
-        return SYSTEM_PROMPT
-    return f"{SYSTEM_PROMPT}\n\n{system_suffix}"
 
 
 def _usage_value(usage: Any, field: str) -> int:

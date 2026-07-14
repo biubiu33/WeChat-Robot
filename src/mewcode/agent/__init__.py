@@ -7,13 +7,23 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 
+from mewcode import __version__
 from mewcode.conversation import Conversation
-from mewcode.llm import Provider, ToolCall, ToolDefinition, ToolResult, Usage as LlmUsage
-from mewcode.prompt import PLAN_MODE_REMINDER
+from mewcode.llm import (
+    Provider,
+    Request,
+    System,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+    Usage as LlmUsage,
+)
+from mewcode.prompt import build_system_prompt, gather_environment, plan_reminder
 from mewcode.tool import DEFAULT_TIMEOUT, Registry, Result, error_result
 
 MAX_ITERATIONS = 25
 MAX_UNKNOWN_RUN = 3
+PLAN_REMINDER_INTERVAL = 4
 
 NOTICE_MAX_ITER = "（已达最大迭代轮数 25，自动停止；可继续发消息推进。）"
 NOTICE_UNKNOWN_TOOLS = "（连续多轮只请求到未注册的工具，自动停止。）"
@@ -36,6 +46,8 @@ class Mode(IntEnum):
 class Usage:
     input: int = 0
     output: int = 0
+    cache_write: int = 0
+    cache_read: int = 0
 
 
 @dataclass(frozen=True)
@@ -68,9 +80,15 @@ class _StreamOutcome:
 
 
 class Agent:
-    def __init__(self, provider: Provider, registry: Registry) -> None:
+    def __init__(
+        self,
+        provider: Provider,
+        registry: Registry,
+        version: str = __version__,
+    ) -> None:
         self._provider = provider
         self._registry = registry
+        self._version = version
 
     async def run(
         self,
@@ -79,7 +97,12 @@ class Agent:
         cancel: asyncio.Event | None = None,
     ) -> AsyncIterator[Event]:
         cancel_event = cancel if cancel is not None else asyncio.Event()
-        definitions, suffix = self._mode_request_options(mode)
+        definitions = self._definitions_for_mode(mode)
+        stable_system = build_system_prompt()
+        environment = await asyncio.to_thread(
+            gather_environment, self._version, self._provider.model
+        )
+        environment_text = environment.render()
         unknown_run = 0
 
         for iteration in range(1, MAX_ITERATIONS + 1):
@@ -89,10 +112,16 @@ class Agent:
                 return
             yield Event(iter=iteration)
 
+            reminder = self._reminder_for(mode, iteration)
+            request = Request(
+                messages=conv.messages(),
+                tools=definitions,
+                system=System(stable=stable_system, environment=environment_text),
+                reminder=reminder,
+            )
+
             outcome: _StreamOutcome | None = None
-            async for item in self._stream_once(
-                conv, definitions, suffix, cancel_event
-            ):
+            async for item in self._stream_once(request, cancel_event):
                 if isinstance(item, Event):
                     yield item
                 else:
@@ -112,6 +141,8 @@ class Agent:
                     usage=Usage(
                         input=outcome.usage.input_tokens,
                         output=outcome.usage.output_tokens,
+                        cache_write=outcome.usage.cache_write,
+                        cache_read=outcome.usage.cache_read,
                     )
                 )
 
@@ -156,15 +187,13 @@ class Agent:
 
     async def _stream_once(
         self,
-        conv: Conversation,
-        definitions: list[ToolDefinition],
-        suffix: str,
+        request: Request,
         cancel: asyncio.Event,
     ) -> AsyncIterator[Event | _StreamOutcome]:
         text = ""
         calls: list[ToolCall] = []
         usage: LlmUsage | None = None
-        stream = self._provider.stream(conv.messages(), definitions, suffix)
+        stream = self._provider.stream(request)
         iterator = stream.__aiter__()
         next_event: asyncio.Task[object] | None = None
         cancelled: asyncio.Task[bool] | None = None
@@ -330,10 +359,16 @@ class Agent:
                 cancelled.cancel()
             await asyncio.gather(cancelled, return_exceptions=True)
 
-    def _mode_request_options(self, mode: Mode) -> tuple[list[ToolDefinition], str]:
+    def _definitions_for_mode(self, mode: Mode) -> list[ToolDefinition]:
         if mode is Mode.PLAN:
-            return self._registry.read_only_definitions(), PLAN_MODE_REMINDER
-        return self._registry.definitions(), ""
+            return self._registry.read_only_definitions()
+        return self._registry.definitions()
+
+    def _reminder_for(self, mode: Mode, iteration: int) -> str:
+        if mode is not Mode.PLAN:
+            return ""
+        full = iteration == 1 or (iteration - 1) % PLAN_REMINDER_INTERVAL == 0
+        return plan_reminder(full)
 
     def _all_unknown(self, calls: list[ToolCall]) -> bool:
         return all(self._registry.get(call.name) is None for call in calls)
@@ -426,6 +461,7 @@ __all__ = [
     "NOTICE_STREAM_ERR",
     "NOTICE_UNKNOWN_TOOLS",
     "Phase",
+    "PLAN_REMINDER_INTERVAL",
     "ToolEvent",
     "Usage",
 ]

@@ -18,6 +18,8 @@ class Usage:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_write: int = 0
+    cache_read: int = 0
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,24 @@ class Message:
 
 
 @dataclass(frozen=True)
+class System:
+    """稳定系统提示与每轮动态环境信息。"""
+
+    stable: str = ""
+    environment: str = ""
+
+
+@dataclass(frozen=True)
+class Request:
+    """一次 Provider 请求的完整、可扩展载荷。"""
+
+    messages: list[Message] = field(default_factory=list)
+    tools: list[ToolDefinition] = field(default_factory=list)
+    system: System = field(default_factory=System)
+    reminder: str = ""
+
+
+@dataclass(frozen=True)
 class StreamEvent:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -67,12 +87,7 @@ class Provider(Protocol):
 
     def redact(self, text: str) -> str: ...
 
-    def stream(
-        self,
-        msgs: list[Message],
-        tools: list[ToolDefinition],
-        system_suffix: str = "",
-    ) -> AsyncIterator[StreamEvent]: ...
+    def stream(self, req: Request) -> AsyncIterator[StreamEvent]: ...
 
 
 def new_provider(cfg: ProviderConfig) -> Provider:
@@ -96,10 +111,12 @@ def redact_secret(text: str, secret: str) -> str:
 __all__ = [
     "Message",
     "Provider",
+    "Request",
     "ROLE_ASSISTANT",
     "ROLE_TOOL",
     "ROLE_USER",
     "StreamEvent",
+    "System",
     "ToolCall",
     "ToolDefinition",
     "ToolResult",

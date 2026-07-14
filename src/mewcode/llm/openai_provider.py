@@ -5,10 +5,9 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from mewcode.config import ProviderConfig
-from mewcode.prompt import SYSTEM_PROMPT
 
 from . import (
-    Message,
+    Request,
     StreamEvent,
     ToolCall,
     ToolDefinition,
@@ -42,18 +41,16 @@ class OpenAIProvider:
 
     async def stream(
         self,
-        msgs: list[Message],
-        tools: list[ToolDefinition],
-        system_suffix: str = "",
+        req: Request,
     ) -> AsyncIterator[StreamEvent]:
         params: dict[str, Any] = {
             "model": self._model,
-            "messages": to_openai_messages(msgs, system_suffix),
+            "messages": to_openai_messages(req),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        if tools:
-            params["tools"] = to_openai_tools(tools)
+        if req.tools:
+            params["tools"] = to_openai_tools(req.tools)
             params["tool_choice"] = "auto"
 
         tool_buffers: dict[int, dict[str, str]] = {}
@@ -101,16 +98,15 @@ def to_openai_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     ]
 
 
-def to_openai_messages(
-    msgs: list[Message], system_suffix: str = ""
-) -> list[dict[str, Any]]:
-    system = SYSTEM_PROMPT
-    if system_suffix:
-        system = f"{system}\n\n{system_suffix}"
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system}
-    ]
-    for message in msgs:
+def to_openai_messages(req: Request) -> list[dict[str, Any]]:
+    """序列化 OpenAI 消息，稳定提示始终保留在请求前缀。"""
+    messages: list[dict[str, Any]] = []
+    if req.system.stable:
+        messages.append({"role": "system", "content": req.system.stable})
+    if req.system.environment:
+        messages.append({"role": "system", "content": req.system.environment})
+
+    for message in req.messages:
         if message.role == "assistant" and message.tool_calls:
             messages.append(
                 {
@@ -140,6 +136,8 @@ def to_openai_messages(
             )
         else:
             messages.append({"role": message.role, "content": message.content})
+    if req.reminder:
+        messages.append({"role": "user", "content": req.reminder})
     return messages
 
 
@@ -185,9 +183,15 @@ def _extract_usage(chunk: Any) -> Usage | None:
     usage = getattr(chunk, "usage", None)
     prompt_tokens = getattr(usage, "prompt_tokens", None)
     completion_tokens = getattr(usage, "completion_tokens", None)
-    if not isinstance(prompt_tokens, int) and not isinstance(completion_tokens, int):
+    details = getattr(usage, "prompt_tokens_details", None)
+    cache_read = getattr(details, "cached_tokens", None)
+    if not any(
+        isinstance(value, int)
+        for value in (prompt_tokens, completion_tokens, cache_read)
+    ):
         return None
     return Usage(
         input_tokens=prompt_tokens if isinstance(prompt_tokens, int) else 0,
         output_tokens=completion_tokens if isinstance(completion_tokens, int) else 0,
+        cache_read=cache_read if isinstance(cache_read, int) else 0,
     )
