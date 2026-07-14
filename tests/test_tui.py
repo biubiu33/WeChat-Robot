@@ -132,18 +132,47 @@ async def test_tui_escape_cancels_streaming_turn_without_exiting() -> None:
     app = MewCodeApp([config], registry=new_default_registry())
     provider = BlockingProvider()
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         app.provider = provider
         input_area = app.query_one("#input")
         input_area.text = "开始"
         await app.submit_current_input()
         await asyncio.sleep(0)
-        app.action_cancel_turn()
+        await pilot.press("escape")
         await _wait_until_idle(app)
 
         assert input_area.read_only is False
         assert input_area.has_focus
         assert app.conv.last_role() == "assistant"
+
+
+@async_test
+async def test_tui_provider_error_keeps_conversation_valid_and_recovers() -> None:
+    class ErrorProvider(FakeProvider):
+        async def stream(self, msgs, tools, system_suffix=""):
+            self.requests += 1
+            yield StreamEvent(err=RuntimeError("network"))
+
+    config = ProviderConfig(
+        name="fake",
+        protocol="openai",
+        api_key="test-key",
+        model="fake-model",
+    )
+    app = MewCodeApp([config], registry=new_default_registry())
+    provider = ErrorProvider()
+
+    async with app.run_test():
+        app.provider = provider
+        input_area = app.query_one("#input")
+        input_area.text = "触发错误"
+        await app.submit_current_input()
+        await _wait_until_idle(app)
+
+        assert input_area.read_only is False
+        assert input_area.has_focus
+        assert app.conv.last_role() == "assistant"
+        assert "请求出错" in app.conv.messages()[-1].content
 
 
 def test_tool_line_only_previews_safe_key_argument() -> None:

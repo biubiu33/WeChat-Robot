@@ -28,10 +28,12 @@ async def consume_stream(app: MewCodeApp) -> None:
     try:
         agent = Agent(app.provider, app.registry)
         cancel = app.turn_cancel if app.turn_cancel is not None else asyncio.Event()
+        saw_error = False
         async for event in agent.run(app.conv, app.mode, cancel):
             if event.err is not None:
-                finish_with_error(app, event.err)
-                return
+                app.query_one("#log", RichLog).write(error_block(event.err))
+                saw_error = True
+                continue
             if event.tool is not None:
                 if event.tool.phase is Phase.START:
                     _start_tool(app, event.tool.name, event.tool.args)
@@ -53,7 +55,10 @@ async def consume_stream(app: MewCodeApp) -> None:
                 app.iter = event.iter
                 refresh_streaming_view(app)
             if event.done:
-                finish_with_assistant(app, app.cur_reply, save=False)
+                if saw_error:
+                    _finish_turn(app)
+                else:
+                    finish_with_assistant(app, app.cur_reply, save=False)
                 return
             if event.text:
                 app.cur_reply += event.text
