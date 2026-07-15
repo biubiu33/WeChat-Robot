@@ -10,7 +10,8 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.timer import Timer
-from textual.widgets import OptionList, RichLog, Static, TextArea
+from textual.widget import Widget
+from textual.widgets import OptionList, Static, TextArea
 
 from mewcode.agent import Mode
 from mewcode import __version__
@@ -20,7 +21,14 @@ from mewcode.llm import Provider, new_provider
 from mewcode.prompt import render_banner
 from mewcode.tool import Registry, new_default_registry
 
-from .view import selecting_status, status_bar, user_block
+from .timeline import Timeline, ToolRun
+from .view import (
+    notice_entry,
+    selecting_status,
+    status_bar,
+    system_entry,
+    user_entry,
+)
 
 
 class SessionState(Enum):
@@ -60,15 +68,18 @@ class MewCodeApp(App):
         layout: vertical;
     }
 
-    #log {
+    #timeline {
         height: 1fr;
         padding: 1 2;
+        scrollbar-gutter: stable;
     }
 
     #streaming {
         height: auto;
         max-height: 12;
         padding: 0 2;
+        border-top: solid $boost;
+        overflow-y: auto;
     }
 
     #input {
@@ -82,6 +93,52 @@ class MewCodeApp(App):
         height: 1;
         padding: 0 2;
         background: $boost;
+    }
+
+    .timeline-entry {
+        width: 100%;
+        margin: 0 0 1 0;
+        padding: 0 1;
+    }
+
+    .user-entry {
+        background: $boost;
+        border-left: heavy $primary;
+        color: $text;
+    }
+
+    .assistant-entry {
+        border-left: heavy $success;
+    }
+
+    .tool-result-entry {
+        border-left: heavy $accent;
+        background: $surface;
+    }
+
+    .tool-result-entry-error {
+        border-left: heavy $error;
+    }
+
+    .tool-result-detail {
+        padding: 0 1;
+    }
+
+    .tool-result-error {
+        color: $error;
+    }
+
+    .notice-entry {
+        border-left: heavy $warning;
+    }
+
+    .error-entry {
+        background: $boost;
+        border-left: heavy $error;
+    }
+
+    .system-entry {
+        border-left: heavy $secondary;
     }
     """
 
@@ -108,7 +165,7 @@ class MewCodeApp(App):
         self.usage_in = 0
         self.usage_out = 0
         self.cur_reply = ""
-        self.cur_tools: list[tuple[str, str]] = []
+        self.cur_tools: list[ToolRun] = []
         self.turn_start = 0.0
         self._stream_task: asyncio.Task[None] | None = None
         self._timer: Timer | None = None
@@ -125,15 +182,15 @@ class MewCodeApp(App):
             id="selector",
         )
         yield Container(
-            RichLog(id="log", wrap=True, markup=True),
+            Timeline(id="timeline"),
             Static("", id="streaming"),
-            PromptInput(placeholder="❯ Send a message...", id="input"),
+            PromptInput(placeholder="输入消息...", id="input"),
             Static("", id="statusbar"),
             id="main",
         )
 
     async def on_mount(self) -> None:
-        self.query_one("#log", RichLog).write(render_banner(self.version, os.getcwd()))
+        await self.append_timeline(system_entry(render_banner(self.version, os.getcwd())))
 
         if len(self.providers) == 1:
             self.provider = new_provider(self.providers[0])
@@ -167,8 +224,8 @@ class MewCodeApp(App):
 
         if text == "/plan":
             self.mode = Mode.PLAN
-            self.query_one("#log", RichLog).write(
-                Text("● 已进入计划模式（只允许只读工具）", style="bold yellow")
+            await self.append_timeline(
+                notice_entry("已进入计划模式（只允许只读工具）")
             )
             text_area.text = ""
             self.refresh_status()
@@ -185,7 +242,7 @@ class MewCodeApp(App):
             text = EXECUTE_DIRECTIVE
 
         self.conv.add_user(text)
-        self.query_one("#log", RichLog).write(user_block(text))
+        await self.append_timeline(user_entry(text))
         text_area.text = ""
         text_area.read_only = True
         self.cur_reply = ""
@@ -200,6 +257,9 @@ class MewCodeApp(App):
 
         self._timer = self.set_interval(0.1, lambda: tick(self, SessionState.STREAMING))
         self._stream_task = asyncio.create_task(consume_stream(self))
+
+    async def append_timeline(self, entry: Widget) -> None:
+        await self.query_one("#timeline", Timeline).append(entry)
 
     async def action_quit(self) -> None:
         if self._stream_task is not None:

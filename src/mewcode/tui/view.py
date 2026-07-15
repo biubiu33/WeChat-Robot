@@ -6,29 +6,54 @@ from rich.console import Group
 from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
+from textual.widgets import Collapsible, Static
 
 from mewcode.agent import Mode
 
 
-def user_block(text: str) -> Text:
-    return Text(f"● {text}", style="bold cyan")
+def user_entry(text: str) -> Static:
+    return Static(
+        Group(
+            Text("你", style="bold cyan"),
+            Text(text),
+        ),
+        classes="timeline-entry user-entry",
+    )
 
 
-def assistant_block(reply: str, elapsed_seconds: int) -> Group:
+def assistant_entry(reply: str, elapsed_seconds: int) -> Static:
     heading = Text(f"● MewCode ({elapsed_seconds}s)", style="bold green")
-    return Group(heading, Markdown(reply))
+    return Static(
+        Group(heading, Markdown(reply)), classes="timeline-entry assistant-entry"
+    )
 
 
-def error_block(err: Exception) -> Text:
-    return Text(f"● 错误: {err}", style="bold red")
+def error_entry(err: Exception) -> Static:
+    return Static(
+        Text(f"● 错误: {err}", style="bold red"),
+        classes="timeline-entry error-entry",
+    )
+
+
+def notice_entry(text: str) -> Static:
+    return Static(
+        Text(f"● {text}", style="dim yellow"),
+        classes="timeline-entry notice-entry",
+    )
+
+
+def system_entry(text: str) -> Static:
+    return Static(
+        Text(text, style="dim"), classes="timeline-entry system-entry"
+    )
 
 
 def streaming_block(reply: str, elapsed_seconds: int, iteration: int = 0) -> Group:
     body = reply or "等待模型响应..."
-    detail = f"Imagining... ({elapsed_seconds}s"
+    detail = f"生成中...（{elapsed_seconds}s"
     if iteration:
-        detail += f" · 第 {iteration} 轮"
-    detail += ")"
+        detail += f"，第 {iteration} 轮"
+    detail += "）"
     return Group(
         Text(f"● {body}", style="green"),
         Text(detail, style="dim"),
@@ -41,12 +66,33 @@ def tools_running_block(
     rows: list[Text] = []
     for name, args in tools:
         rows.append(tool_line(name, args))
-        rows.append(Text(f"  Running... ({elapsed_seconds}s)", style="dim"))
+        rows.append(Text(f"  运行中...（{elapsed_seconds}s）", style="dim"))
     return Group(*rows)
 
 
 def tool_line(name: str, args: str) -> Text:
     return Text(f"● {name}({_argument_preview(name, args)})", style="bold cyan")
+
+
+def tool_result_entry(
+    name: str,
+    args: str,
+    result: str,
+    is_error: bool,
+) -> Collapsible:
+    status = "失败" if is_error else "完成"
+    detail_class = "tool-result-detail tool-result-error" if is_error else "tool-result-detail"
+    title = f"工具 {name} · {status} · {_argument_preview(name, args)}"
+    return Collapsible(
+        Static(tool_result_summary(result, is_error), classes=detail_class),
+        title=title,
+        collapsed=True,
+        classes=(
+            "timeline-entry tool-result-entry tool-result-entry-error"
+            if is_error
+            else "timeline-entry tool-result-entry"
+        ),
+    )
 
 
 def tool_result_summary(result: str, is_error: bool) -> Text:
@@ -58,10 +104,6 @@ def tool_result_summary(result: str, is_error: bool) -> Text:
     body = "\n  ".join(summary) if summary else "(empty)"
     style = "red" if is_error else "dim"
     return Text(f"  -> {body}", style=style)
-
-
-def notice_block(text: str) -> Text:
-    return Text(f"● {text}", style="dim yellow")
 
 
 def _argument_preview(name: str, args: str) -> str:

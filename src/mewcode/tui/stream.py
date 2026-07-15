@@ -5,16 +5,16 @@ import time
 from typing import TYPE_CHECKING
 
 from mewcode.agent import Agent, Phase
-from textual.widgets import RichLog, Static, TextArea
+from textual.widgets import Static, TextArea
 
+from .timeline import ToolRun
 from .view import (
-    assistant_block,
-    error_block,
+    assistant_entry,
+    error_entry,
+    notice_entry,
     streaming_block,
-    tool_line,
-    tool_result_summary,
+    tool_result_entry,
     tools_running_block,
-    notice_block,
 )
 
 if TYPE_CHECKING:
@@ -31,14 +31,14 @@ async def consume_stream(app: MewCodeApp) -> None:
         saw_error = False
         async for event in agent.run(app.conv, app.mode, cancel):
             if event.err is not None:
-                app.query_one("#log", RichLog).write(error_block(event.err))
+                await app.append_timeline(error_entry(event.err))
                 saw_error = True
                 continue
             if event.tool is not None:
                 if event.tool.phase is Phase.START:
-                    _start_tool(app, event.tool.name, event.tool.args)
+                    await _start_tool(app, event.tool.name, event.tool.args)
                 else:
-                    _finish_tool(
+                    await _finish_tool(
                         app,
                         event.tool.name,
                         event.tool.args,
@@ -50,7 +50,7 @@ async def consume_stream(app: MewCodeApp) -> None:
                 app.usage_out += event.usage.output
                 app.refresh_status()
             if event.notice:
-                app.query_one("#log", RichLog).write(notice_block(event.notice))
+                await app.append_timeline(notice_entry(event.notice))
             if event.iter:
                 app.iter = event.iter
                 refresh_streaming_view(app)
@@ -58,14 +58,14 @@ async def consume_stream(app: MewCodeApp) -> None:
                 if saw_error:
                     _finish_turn(app)
                 else:
-                    finish_with_assistant(app, app.cur_reply, save=False)
+                    await finish_with_assistant(app, app.cur_reply, save=False)
                 return
             if event.text:
                 app.cur_reply += event.text
                 refresh_streaming_view(app)
         _finish_turn(app)
     except Exception as exc:
-        finish_with_error(app, exc)
+        await finish_with_error(app, exc)
 
 
 def tick(app: MewCodeApp, streaming_state: SessionState) -> None:
@@ -76,23 +76,27 @@ def tick(app: MewCodeApp, streaming_state: SessionState) -> None:
 def refresh_streaming_view(app: MewCodeApp) -> None:
     elapsed = _elapsed_seconds(app)
     if app.cur_tools:
-        block = tools_running_block(app.cur_tools, elapsed)
+        block = tools_running_block(
+            [(tool.name, tool.args) for tool in app.cur_tools], elapsed
+        )
     else:
         block = streaming_block(app.cur_reply, elapsed, app.iter)
     app.query_one("#streaming", Static).update(block)
 
 
-def finish_with_assistant(app: MewCodeApp, reply: str, *, save: bool = True) -> None:
+async def finish_with_assistant(
+    app: MewCodeApp, reply: str, *, save: bool = True
+) -> None:
     elapsed = _elapsed_seconds(app)
     if reply:
-        app.query_one("#log", RichLog).write(assistant_block(reply, elapsed))
+        await app.append_timeline(assistant_entry(reply, elapsed))
     if save:
         app.conv.add_assistant(reply)
     _finish_turn(app)
 
 
-def finish_with_error(app: MewCodeApp, err: Exception) -> None:
-    app.query_one("#log", RichLog).write(error_block(err))
+async def finish_with_error(app: MewCodeApp, err: Exception) -> None:
+    await app.append_timeline(error_entry(err))
     _finish_turn(app)
 
 
@@ -116,25 +120,25 @@ def _elapsed_seconds(app: MewCodeApp) -> int:
     return max(0, int(time.monotonic() - app.turn_start))
 
 
-def _start_tool(app: MewCodeApp, name: str, args: str) -> None:
+async def _start_tool(app: MewCodeApp, name: str, args: str) -> None:
     if app.cur_reply:
-        app.query_one("#log", RichLog).write(
-            assistant_block(app.cur_reply, _elapsed_seconds(app))
+        await app.append_timeline(
+            assistant_entry(app.cur_reply, _elapsed_seconds(app))
         )
         app.cur_reply = ""
-    app.cur_tools.append((name, args))
+    app.cur_tools.append(ToolRun(name, args))
     refresh_streaming_view(app)
 
 
-def _finish_tool(
+async def _finish_tool(
     app: MewCodeApp,
     name: str,
     args: str,
     result: str,
     is_error: bool,
 ) -> None:
-    log = app.query_one("#log", RichLog)
-    display_name, display_args = app.cur_tools.pop(0) if app.cur_tools else (name, args)
-    log.write(tool_line(display_name, display_args))
-    log.write(tool_result_summary(result, is_error))
+    tool = app.cur_tools.pop(0) if app.cur_tools else ToolRun(name, args)
+    await app.append_timeline(
+        tool_result_entry(tool.name, tool.args, result, is_error)
+    )
     refresh_streaming_view(app)

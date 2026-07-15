@@ -9,10 +9,23 @@ from typing import Any, TypeVar
 from rich.console import Console
 from mewcode.config import ProviderConfig
 from mewcode.agent import Mode
-from mewcode.llm import Request, StreamEvent, Usage
-from mewcode.tool import new_default_registry
+from mewcode.llm import Request, StreamEvent, ToolCall, Usage
+from mewcode.tool import Registry, Result, new_default_registry
 from mewcode.tui.app import MewCodeApp, SessionState
-from mewcode.tui.view import status_bar, tool_line, tool_result_summary
+from mewcode.tui.timeline import Timeline
+from mewcode.tui.view import (
+    assistant_entry,
+    error_entry,
+    notice_entry,
+    status_bar,
+    streaming_block,
+    tool_line,
+    tool_result_entry,
+    tool_result_summary,
+    user_entry,
+)
+from textual.app import App, ComposeResult
+from textual.widgets import Collapsible, Static
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -40,6 +53,32 @@ class FakeProvider:
         yield StreamEvent(text=f"回复 {self.requests}")
         yield StreamEvent(usage=Usage(10, 5))
         yield StreamEvent(done=True)
+
+
+class TimelineApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield Timeline(id="timeline")
+
+
+class ToolResultApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield tool_result_entry("bash", '{"command":"echo ok"}', "ok", False)
+
+
+class SuccessfulTool:
+    read_only = True
+
+    def name(self) -> str:
+        return "read_file"
+
+    def description(self) -> str:
+        return "测试读取工具"
+
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, args: str) -> Result:
+        return Result("第一行\n第二行")
 
 
 async def _wait_until_idle(app: MewCodeApp) -> None:
@@ -81,6 +120,150 @@ async def test_tui_passes_tools_and_restores_input_for_multiple_turns() -> None:
         "user",
         "assistant",
     ]
+
+
+@async_test
+async def test_timeline_highlights_each_user_turn_and_keeps_input_bottom() -> None:
+    config = ProviderConfig(
+        name="fake",
+        protocol="openai",
+        api_key="test-key",
+        model="fake-model",
+    )
+    app = MewCodeApp([config], registry=new_default_registry())
+    provider = FakeProvider()
+
+    async with app.run_test(size=(48, 14)):
+        app.provider = provider
+        input_area = app.query_one("#input")
+        for question in ("第一问", "第二问", "第三问"):
+            input_area.text = question
+            await app.submit_current_input()
+            await _wait_until_idle(app)
+
+        users = list(app.query(".user-entry"))
+        timeline = app.query_one("#timeline", Timeline)
+        assert len(users) == 3
+        assert all(entry.has_class("timeline-entry") for entry in users)
+        assert timeline.region.bottom <= input_area.region.y
+        assert app.query_one("#statusbar", Static).region.y > input_area.region.y
+
+
+@async_test
+async def test_timeline_only_follows_when_view_is_at_bottom() -> None:
+    app = TimelineApp()
+
+    async with app.run_test(size=(40, 8)) as pilot:
+        timeline = app.query_one("#timeline", Timeline)
+        for index in range(12):
+            await timeline.append(Static(f"条目 {index}\n第二行"))
+        await pilot.pause()
+        assert timeline.scroll_y == timeline.max_scroll_y
+
+        timeline.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        before = timeline.scroll_y
+        await timeline.append(Static("历史阅读期间的新增条目\n第二行"))
+        await pilot.pause()
+        assert timeline.scroll_y == before
+
+        timeline.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        await timeline.append(Static("恢复跟随后的新增条目\n第二行"))
+        await pilot.pause()
+        assert timeline.scroll_y == timeline.max_scroll_y
+
+
+@async_test
+async def test_tool_result_expands_and_collapses_when_title_is_clicked() -> None:
+    app = ToolResultApp()
+
+    async with app.run_test() as pilot:
+        tool = app.query_one(Collapsible)
+        title = tool.query_one("CollapsibleTitle")
+        assert tool.collapsed is True
+        assert await pilot.click(title, offset=(0, 0))
+        await pilot.pause()
+        assert tool.collapsed is False
+        assert await pilot.click(title, offset=(0, 0))
+        await pilot.pause()
+        assert tool.collapsed is True
+
+
+def test_semantic_entries_and_collapsed_tool_result_are_safe() -> None:
+    user = user_entry("完整用户问题")
+    assistant = assistant_entry("助手回复", 2)
+    error = error_entry(RuntimeError("network"))
+    notice = notice_entry("已取消")
+    tool = tool_result_entry(
+        "write_file",
+        '{"path":"a.py","content":"secret file content"}',
+        "\n".join(f"line {index}" for index in range(20)),
+        False,
+    )
+
+    assert user.has_class("user-entry")
+    assert assistant.has_class("assistant-entry")
+    assert error.has_class("error-entry")
+    assert notice.has_class("notice-entry")
+    assert tool.has_class("tool-result-entry")
+    assert tool.collapsed is True
+    assert "write_file" in tool.title and "a.py" in tool.title
+    assert "secret file content" not in tool.title
+    rendered = _render(tool_result_summary("\n".join(f"line {index}" for index in range(20)), False))
+    assert "line 7" in rendered
+    assert "line 8" not in rendered
+    assert "[truncated]" in rendered
+
+
+@async_test
+async def test_tool_events_create_collapsed_timeline_result_and_clear_activity() -> None:
+    class ToolProvider(FakeProvider):
+        async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
+            self.requests += 1
+            if self.requests == 1:
+                yield StreamEvent(text="先读取")
+                yield StreamEvent(
+                    tool_calls=[ToolCall("call-1", "read_file", "{}")]
+                )
+                yield StreamEvent(done=True)
+                return
+            yield StreamEvent(text="读取完成")
+            yield StreamEvent(done=True)
+
+    config = ProviderConfig(
+        name="fake",
+        protocol="openai",
+        api_key="test-key",
+        model="fake-model",
+    )
+    registry = Registry()
+    registry.register(SuccessfulTool())
+    app = MewCodeApp([config], registry=registry)
+    provider = ToolProvider()
+
+    async with app.run_test() as pilot:
+        app.provider = provider
+        input_area = app.query_one("#input")
+        input_area.text = "读取测试文件"
+        await app.submit_current_input()
+        await _wait_until_idle(app)
+
+        tool = app.query_one(Collapsible)
+        assert tool.collapsed is True
+        assert "工具 read_file · 完成" in tool.title
+        tool.collapsed = False
+        await pilot.pause()
+        assert tool.collapsed is False
+        assert "第一行" in _render(tool.query_one(".tool-result-detail", Static).render())
+        assert _render(app.query_one("#streaming", Static).render()).strip() == ""
+        assert input_area.read_only is False and input_area.has_focus
+
+
+def _render(renderable: object) -> str:
+    output = StringIO()
+    Console(file=output, force_terminal=False).print(renderable)
+    return output.getvalue()
 
 
 @async_test
@@ -199,3 +382,10 @@ def test_status_bar_shows_plan_mode_and_compact_usage() -> None:
     assert "PLAN" in text
     assert "1.2k" in text
     assert "↑" in text and "↓" in text
+
+
+def test_streaming_block_uses_chinese_activity_text() -> None:
+    rendered = _render(streaming_block("正在回复", 3, 2))
+
+    assert "生成中" in rendered
+    assert "第 2 轮" in rendered
