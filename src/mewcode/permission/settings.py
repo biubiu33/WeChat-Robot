@@ -58,7 +58,9 @@ def load_settings(path: Path) -> Settings:
         permissions_raw = {}
     allow = _strings(permissions_raw.get("allow"))
     deny = _strings(permissions_raw.get("deny"))
-    return Settings(default_mode=default_mode, permissions=PermissionsBlock(allow, deny))
+    return Settings(
+        default_mode=default_mode, permissions=PermissionsBlock(allow, deny)
+    )
 
 
 def save_settings(path: Path, settings: Settings) -> None:
@@ -118,10 +120,18 @@ def extract_target(call: ToolCall) -> tuple[str, bool, bool]:
 
     if call.name in {"read_file", "write_file", "edit_file"}:
         path = values.get("path")
-        return (path, True, bool(isinstance(path, str) and path)) if isinstance(path, str) else ("", True, False)
+        return (
+            (path, True, bool(isinstance(path, str) and path))
+            if isinstance(path, str)
+            else ("", True, False)
+        )
     if call.name in {"glob", "grep"}:
         path = values.get("path", ".")
-        return (path, True, bool(isinstance(path, str) and path)) if isinstance(path, str) else ("", True, False)
+        return (
+            (path, True, bool(isinstance(path, str) and path))
+            if isinstance(path, str)
+            else ("", True, False)
+        )
     if call.name == "bash":
         command = values.get("command")
         return (
@@ -133,4 +143,8 @@ def extract_target(call: ToolCall) -> tuple[str, bool, bool]:
 
 
 def _strings(value: object) -> list[str]:
-    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+    return (
+        [item for item in value if isinstance(item, str)]
+        if isinstance(value, list)
+        else []
+    )

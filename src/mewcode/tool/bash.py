@@ -52,9 +52,7 @@ class BashTool:
         try:
             process_options: dict[str, Any]
             if os.name == "nt":
-                process_options = {
-                    "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
-                }
+                process_options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
             else:
                 process_options = {"start_new_session": True}
             process = await asyncio.create_subprocess_shell(
@@ -66,12 +64,14 @@ class BashTool:
             assert process.stdout is not None and process.stderr is not None
             stdout_task = asyncio.create_task(_read_limited(process.stdout))
             stderr_task = asyncio.create_task(_read_limited(process.stderr))
-            (stdout_bytes, stdout_truncated), (stderr_bytes, stderr_truncated), _ = (
-                await asyncio.gather(
-                    stdout_task,
-                    stderr_task,
-                    process.wait(),
-                )
+            (
+                (stdout_bytes, stdout_truncated),
+                (stderr_bytes, stderr_truncated),
+                _,
+            ) = await asyncio.gather(
+                stdout_task,
+                stderr_task,
+                process.wait(),
             )
         except asyncio.CancelledError:
             if process is not None:

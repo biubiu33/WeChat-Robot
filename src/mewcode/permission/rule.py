@@ -89,6 +89,9 @@ def match_pattern(pattern: str, target: str, *, is_path: bool) -> bool:
 
 
 def _rule_matches(rule: Rule, tool: str, target: str, *, is_path: bool) -> bool:
-    return rule.tool.casefold() == tool.casefold() and match_pattern(
-        rule.pattern, target, is_path=is_path
+    tool_matches = rule.tool.casefold() == tool.casefold() or (
+        rule.tool.startswith("mcp__")
+        and "*" in rule.tool
+        and match_pattern(rule.tool, tool, is_path=False)
     )
+    return tool_matches and match_pattern(rule.pattern, target, is_path=is_path)

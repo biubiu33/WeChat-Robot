@@ -19,6 +19,7 @@ from .settings import (
     to_rule_set,
 )
 
+
 @dataclass
 class Engine:
     root: Path

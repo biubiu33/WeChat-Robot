@@ -84,7 +84,9 @@ class Registry:
 
         normalized_args = args.strip() or "{}"
         try:
-            return await asyncio.wait_for(tool.execute(normalized_args), timeout=timeout)
+            return await asyncio.wait_for(
+                tool.execute(normalized_args), timeout=timeout
+            )
         except TimeoutError:
             return error_result("timeout", f"工具 {name} 执行超时（{timeout:g} 秒）")
         except asyncio.CancelledError:

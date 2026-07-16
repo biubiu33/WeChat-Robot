@@ -22,8 +22,8 @@ from mewcode.agent import (
     Phase,
 )
 from mewcode.conversation import Conversation
-from mewcode.llm import Request, StreamEvent, ToolCall, ToolDefinition, Usage
-from mewcode.permission import Mode, Outcome, new_engine
+from mewcode.llm import Request, StreamEvent, ToolCall, Usage
+from mewcode.permission import Outcome, new_engine
 from mewcode.tool import Registry, Result, new_default_registry
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -276,9 +276,7 @@ async def test_cancel_records_cancelled_results_and_allows_followup() -> None:
     provider = FakeProvider(
         [
             [
-                StreamEvent(
-                    tool_calls=[ToolCall("slow-id", "slow", "{}")]
-                ),
+                StreamEvent(tool_calls=[ToolCall("slow-id", "slow", "{}")]),
                 StreamEvent(done=True),
             ],
             [StreamEvent(text="后续正常"), StreamEvent(done=True)],
@@ -333,14 +331,9 @@ async def test_plan_mode_sends_read_only_tools_and_dynamic_reminder() -> None:
 
 @async_test
 async def test_plan_reminder_frequency_and_history_are_isolated() -> None:
-    calls = [
-        ToolCall(f"call-{index}", "read_file", "{}") for index in range(1, 5)
-    ]
+    calls = [ToolCall(f"call-{index}", "read_file", "{}") for index in range(1, 5)]
     provider = FakeProvider(
-        [
-            [StreamEvent(tool_calls=[call]), StreamEvent(done=True)]
-            for call in calls
-        ]
+        [[StreamEvent(tool_calls=[call]), StreamEvent(done=True)] for call in calls]
         + [[StreamEvent(text="计划完成"), StreamEvent(done=True)]]
     )
     registry = Registry()
@@ -357,9 +350,7 @@ async def test_plan_reminder_frequency_and_history_are_isolated() -> None:
     assert "read_file、glob、grep" not in provider.requests[3].reminder
     assert "read_file、glob、grep" in provider.requests[4].reminder
     assert provider.requests[0].system.stable == provider.requests[4].system.stable
-    assert all(
-        "system-reminder" not in message.content for message in conv.messages()
-    )
+    assert all("system-reminder" not in message.content for message in conv.messages())
 
 
 @async_test
@@ -454,9 +445,7 @@ async def test_permission_blacklist_denies_and_agent_loop_continues(
 async def test_permission_approval_outcomes(
     tmp_path: Path, outcome: Outcome, should_run: bool
 ) -> None:
-    requested = ToolCall(
-        "write", "write_file", '{"path":"src/a.py","content":"x"}'
-    )
+    requested = ToolCall("write", "write_file", '{"path":"src/a.py","content":"x"}')
     provider = FakeProvider(
         [
             [StreamEvent(tool_calls=[requested]), StreamEvent(done=True)],
@@ -507,10 +496,10 @@ async def test_permission_approval_outcomes(
 async def test_cancel_while_waiting_for_permission_keeps_history_usable(
     tmp_path: Path,
 ) -> None:
-    requested = ToolCall(
-        "write", "write_file", '{"path":"a.txt","content":"x"}'
+    requested = ToolCall("write", "write_file", '{"path":"a.txt","content":"x"}')
+    provider = FakeProvider(
+        [[StreamEvent(tool_calls=[requested]), StreamEvent(done=True)]]
     )
-    provider = FakeProvider([[StreamEvent(tool_calls=[requested]), StreamEvent(done=True)]])
     registry = Registry()
     registry.register(RecordingTool("write_file", []))
     engine, err = new_engine(tmp_path)

@@ -5,6 +5,7 @@ MewCode 是一个使用 Python 3.12+ 开发的终端 Coding Agent。它支持 An
 ## 功能
 
 - Anthropic Claude 和 OpenAI 兼容 API，支持多 Provider 配置与启动时选择。
+- MCP 客户端：启动时从用户级配置发现 stdio 或 Streamable HTTP Server，并将远端工具注册到工具中心。
 - 流式输出、多轮会话、工具调用、Token 用量和迭代进度显示。
 - ReAct Agent Loop：模型调用工具、读取结果并继续下一轮，直到任务完成或触发安全停止条件。
 - 六个核心工具：`read_file`、`write_file`、`edit_file`、`bash`、`glob`、`grep`。
@@ -16,7 +17,7 @@ MewCode 是一个使用 Python 3.12+ 开发的终端 Coding Agent。它支持 An
 ## 环境
 
 - Python 3.12+
-- 运行依赖：`textual`、`rich`、`anthropic`、`openai`、`pyyaml`
+- 运行依赖：`textual`、`rich`、`anthropic`、`openai`、`mcp`、`pyyaml`
 - 开发依赖：`pytest`、`ruff`、`mypy`
 
 ## 安装
@@ -47,26 +48,13 @@ mewcode
 
 ## 配置
 
-配置文件采用 UTF-8 YAML，顶层字段为 `providers`。启动时依次查找：
-
-1. `MEWCODE_CONFIG` 环境变量指定的路径。
-2. 当前目录的 `.mewcode/config.yaml`。
-3. 用户目录的 `.mewcode/config.yaml`。
-
-建议将默认配置放在用户目录，这样可以在任意工作目录启动。
+Provider 配置采用 UTF-8 YAML，顶层字段为 `providers`，固定读取用户目录的 `~/.mewcode/config.yaml`。MCP Server 配置固定读取同一目录的 `~/.mewcode/mcp.yaml`，顶层字段为 `mcp_servers`。两份配置互不合并，也不读取项目目录或环境变量指定路径。
 
 Windows PowerShell：
 
 ```powershell
 New-Item -ItemType Directory -Force "$HOME\.mewcode"
 notepad "$HOME\.mewcode\config.yaml"
-```
-
-临时指定配置文件：
-
-```powershell
-$env:MEWCODE_CONFIG = "D:\path\to\config.yaml"
-mewcode
 ```
 
 配置示例：
@@ -97,6 +85,8 @@ providers:
 | `model` | 模型名。 |
 | `base_url` | 可选的自定义或兼容端点；省略时使用 SDK 默认端点。 |
 | `thinking` | 可选，仅 Anthropic 生效。工具调用历史存在后会自动关闭扩展思考，以保持工具循环兼容。 |
+
+MCP 配置示例见 [`.mewcode/mcp-servers.example.yaml`](.mewcode/mcp-servers.example.yaml)。复制为 `$HOME\.mewcode\mcp.yaml` 后，按需设置其中引用的环境变量。每个 Server 必须显式声明 `type: stdio` 或 `type: http`；`env` 和 `headers` 的值支持 `${VAR}` 展开。
 
 ## 使用
 

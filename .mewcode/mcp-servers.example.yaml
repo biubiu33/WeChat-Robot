@@ -1,0 +1,18 @@
+# Copy to ~/.mewcode/mcp.yaml and replace values through environment variables.
+mcp_servers:
+  local-files:
+    type: stdio
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      # Replace with an absolute path that the server may access.
+      - 'D:\path\to\workspace'
+    env:
+      LOG_LEVEL: info
+
+  remote-service:
+    type: http
+    url: "https://mcp.example.com/mcp"
+    headers:
+      Authorization: "Bearer ${MCP_ACCESS_TOKEN}"

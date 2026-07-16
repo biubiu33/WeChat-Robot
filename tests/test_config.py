@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import mewcode.cli as cli
 from mewcode.config import ConfigError, discover_config_path, load
 from mewcode.config import Config, ConfigDiscoveryResult, ProviderConfig
+from mewcode.mcp import Config as McpConfig
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
@@ -67,7 +67,9 @@ providers:
         ),
     ],
 )
-def test_invalid_config_raises_readable_error(tmp_path: Path, body: str, message: str) -> None:
+def test_invalid_config_raises_readable_error(
+    tmp_path: Path, body: str, message: str
+) -> None:
     path = write_config(tmp_path, body)
 
     with pytest.raises(ConfigError, match=message):
@@ -79,68 +81,47 @@ def test_missing_file_raises_config_error(tmp_path: Path) -> None:
         load(str(tmp_path / "missing.yaml"))
 
 
-def test_discover_config_uses_env_path_first(tmp_path: Path) -> None:
-    env_config = write_config(tmp_path, "providers: []\n")
-    cwd = tmp_path / "cwd"
+def test_discover_config_uses_only_home_config(tmp_path: Path) -> None:
+    project = tmp_path / "project"
     home = tmp_path / "home"
-    (cwd / ".mewcode").mkdir(parents=True)
     (home / ".mewcode").mkdir(parents=True)
-    (cwd / ".mewcode" / "config.yaml").write_text("providers: []\n", encoding="utf-8")
+    (project / ".mewcode").mkdir(parents=True)
+    (project / ".mewcode" / "config.yaml").write_text(
+        "providers: []\n", encoding="utf-8"
+    )
     (home / ".mewcode" / "config.yaml").write_text("providers: []\n", encoding="utf-8")
 
-    result = discover_config_path(
-        env={"MEWCODE_CONFIG": str(env_config)},
-        cwd=cwd,
-        home=home,
-    )
+    result = discover_config_path(home=home)
 
-    assert result.path == env_config
-    assert result.attempted_paths == [env_config]
+    assert result.path == home / ".mewcode" / "config.yaml"
+    assert result.attempted_paths == [home / ".mewcode" / "config.yaml"]
 
 
-def test_discover_config_prefers_cwd_over_home(tmp_path: Path) -> None:
-    cwd = tmp_path / "cwd"
+def test_discover_config_does_not_support_environment_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override = write_config(tmp_path, "providers: []\n")
     home = tmp_path / "home"
-    cwd_config = cwd / ".mewcode" / "config.yaml"
-    home_config = home / ".mewcode" / "config.yaml"
-    cwd_config.parent.mkdir(parents=True)
-    home_config.parent.mkdir(parents=True)
-    cwd_config.write_text("providers: []\n", encoding="utf-8")
-    home_config.write_text("providers: []\n", encoding="utf-8")
-
-    result = discover_config_path(env={}, cwd=cwd, home=home)
-
-    assert result.path == cwd_config
-    assert result.attempted_paths == [cwd_config, home_config]
-
-
-def test_discover_config_falls_back_to_home(tmp_path: Path) -> None:
-    cwd = tmp_path / "cwd"
-    home = tmp_path / "home"
-    cwd.mkdir()
     home_config = home / ".mewcode" / "config.yaml"
     home_config.parent.mkdir(parents=True)
     home_config.write_text("providers: []\n", encoding="utf-8")
+    monkeypatch.setenv("MEWCODE_CONFIG", str(override))
 
-    result = discover_config_path(env={}, cwd=cwd, home=home)
+    result = discover_config_path(home=home)
 
     assert result.path == home_config
 
 
-def test_discover_config_lists_attempted_paths_when_missing(tmp_path: Path) -> None:
-    cwd = tmp_path / "cwd"
+def test_discover_config_lists_only_home_path_when_missing(tmp_path: Path) -> None:
     home = tmp_path / "home"
-    cwd.mkdir()
     home.mkdir()
-    cwd_config = cwd / ".mewcode" / "config.yaml"
     home_config = home / ".mewcode" / "config.yaml"
 
     with pytest.raises(ConfigError) as exc_info:
-        discover_config_path(env={}, cwd=cwd, home=home)
+        discover_config_path(home=home)
 
     message = str(exc_info.value)
     assert "未找到配置文件" in message
-    assert str(cwd_config) in message
     assert str(home_config) in message
 
 
@@ -158,8 +139,18 @@ def test_cli_constructs_engine_from_startup_directory(
             captured["args"] = args
             captured["kwargs"] = kwargs
 
-        def run(self) -> None:
+        async def run_async(self) -> None:
             captured["ran"] = True
+
+    class FakeManager:
+        def tools(self) -> list[object]:
+            return []
+
+        async def close(self) -> None:
+            captured["closed"] = True
+
+    async def fake_new_manager(*args: object, **kwargs: object) -> FakeManager:
+        return FakeManager()
 
     import mewcode.tui.app as tui_app
 
@@ -170,6 +161,8 @@ def test_cli_constructs_engine_from_startup_directory(
         lambda: ConfigDiscoveryResult(config_path, [config_path]),
     )
     monkeypatch.setattr(cli, "load", lambda path: Config([provider]))
+    monkeypatch.setattr(cli, "load_mcp_config", lambda: McpConfig())
+    monkeypatch.setattr(cli, "new_manager", fake_new_manager)
     monkeypatch.setattr(tui_app, "MewCodeApp", FakeApp)
 
     cli.main()
@@ -177,3 +170,4 @@ def test_cli_constructs_engine_from_startup_directory(
     engine = captured["kwargs"]["engine"]  # type: ignore[index]
     assert engine.root == tmp_path.resolve()
     assert captured["ran"] is True
+    assert captured["closed"] is True

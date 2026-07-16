@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -206,6 +205,28 @@ def test_unknown_tool_uses_safe_default_mode(tmp_path: Path) -> None:
 
     assert decision is Decision.ASK
     assert "命令执行" in reason
+
+
+def test_mcp_tools_follow_read_only_and_rule_permissions(tmp_path: Path) -> None:
+    engine, err = new_engine(tmp_path)
+    read = call("mcp__demo__search", "{}")
+    write = call("mcp__demo__publish", "{}")
+
+    assert err is None
+    read_decision, _ = check(engine, Mode.DEFAULT, read, True)
+    write_decision, _ = check(engine, Mode.DEFAULT, write, False)
+
+    assert read_decision is Decision.ALLOW
+    assert write_decision is Decision.ASK
+
+    engine.user.allow.append(Rule("mcp__demo__*", "", allow=True))
+    allowed_write, _ = check(engine, Mode.DEFAULT, write, False)
+    other_write, _ = check(
+        engine, Mode.DEFAULT, call("mcp__other__publish", "{}"), False
+    )
+
+    assert allowed_write is Decision.ALLOW
+    assert other_write is Decision.ASK
 
 
 def test_default_mode_uses_nearest_valid_setting(tmp_path: Path) -> None:

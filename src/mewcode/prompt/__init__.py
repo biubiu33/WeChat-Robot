@@ -35,12 +35,7 @@ def build_system_prompt() -> str:
 
 
 def render_banner(version: str, cwd: str) -> str:
-    return (
-        f"{CAT_BANNER}\n"
-        f"MewCode v{version}\n"
-        f"cwd: {cwd}\n"
-        f"{READY_HINT}"
-    )
+    return f"{CAT_BANNER}\nMewCode v{version}\ncwd: {cwd}\n{READY_HINT}"
 
 
 __all__ = [

@@ -43,9 +43,7 @@ def notice_entry(text: str) -> Static:
 
 
 def system_entry(text: str) -> Static:
-    return Static(
-        Text(text, style="dim"), classes="timeline-entry system-entry"
-    )
+    return Static(Text(text, style="dim"), classes="timeline-entry system-entry")
 
 
 def streaming_block(reply: str, elapsed_seconds: int, iteration: int = 0) -> Group:
@@ -60,9 +58,7 @@ def streaming_block(reply: str, elapsed_seconds: int, iteration: int = 0) -> Gro
     )
 
 
-def tools_running_block(
-    tools: list[tuple[str, str]], elapsed_seconds: int
-) -> Group:
+def tools_running_block(tools: list[tuple[str, str]], elapsed_seconds: int) -> Group:
     rows: list[Text] = []
     for name, args in tools:
         rows.append(tool_line(name, args))
@@ -81,7 +77,9 @@ def tool_result_entry(
     is_error: bool,
 ) -> Collapsible:
     status = "失败" if is_error else "完成"
-    detail_class = "tool-result-detail tool-result-error" if is_error else "tool-result-detail"
+    detail_class = (
+        "tool-result-detail tool-result-error" if is_error else "tool-result-detail"
+    )
     title = f"工具 {name} · {status} · {_argument_preview(name, args)}"
     return Collapsible(
         Static(tool_result_summary(result, is_error), classes=detail_class),

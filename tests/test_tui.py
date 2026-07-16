@@ -211,14 +211,18 @@ def test_semantic_entries_and_collapsed_tool_result_are_safe() -> None:
     assert tool.collapsed is True
     assert "write_file" in tool.title and "a.py" in tool.title
     assert "secret file content" not in tool.title
-    rendered = _render(tool_result_summary("\n".join(f"line {index}" for index in range(20)), False))
+    rendered = _render(
+        tool_result_summary("\n".join(f"line {index}" for index in range(20)), False)
+    )
     assert "line 7" in rendered
     assert "line 8" not in rendered
     assert "[truncated]" in rendered
 
 
 @async_test
-async def test_tool_events_create_collapsed_timeline_result_and_clear_activity() -> None:
+async def test_tool_events_create_collapsed_timeline_result_and_clear_activity() -> (
+    None
+):
     class ToolProvider(FakeProvider):
         async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
             self.requests += 1
@@ -256,7 +260,9 @@ async def test_tool_events_create_collapsed_timeline_result_and_clear_activity()
         tool.collapsed = False
         await pilot.pause()
         assert tool.collapsed is False
-        assert "第一行" in _render(tool.query_one(".tool-result-detail", Static).render())
+        assert "第一行" in _render(
+            tool.query_one(".tool-result-detail", Static).render()
+        )
         assert _render(app.query_one("#streaming", Static).render()).strip() == ""
         assert input_area.read_only is False and input_area.has_focus
 

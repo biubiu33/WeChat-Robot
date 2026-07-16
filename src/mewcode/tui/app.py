@@ -205,7 +205,9 @@ class MewCodeApp(App):
         )
 
     async def on_mount(self) -> None:
-        await self.append_timeline(system_entry(render_banner(self.version, os.getcwd())))
+        await self.append_timeline(
+            system_entry(render_banner(self.version, os.getcwd()))
+        )
 
         if len(self.providers) == 1:
             self.provider = new_provider(self.providers[0])
@@ -219,7 +221,9 @@ class MewCodeApp(App):
             provider_list.highlighted = 0
             provider_list.focus()
 
-    async def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    async def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
         from .select import select_provider
 
         select_provider(self, event.option_index, SessionState.IDLE)
@@ -239,9 +243,7 @@ class MewCodeApp(App):
 
         if text == "/plan":
             self.mode = Mode.PLAN
-            await self.append_timeline(
-                notice_entry("已进入计划模式（只允许只读工具）")
-            )
+            await self.append_timeline(notice_entry("已进入计划模式（只允许只读工具）"))
             text_area.text = ""
             self.refresh_status()
             text_area.focus()
@@ -292,7 +294,10 @@ class MewCodeApp(App):
             if not self.pending.respond.done():
                 self.pending.respond.set_result(Outcome.DENY_ONCE)
             self.pending = None
-        if self.state in (SessionState.STREAMING, SessionState.APPROVING) and self.turn_cancel is not None:
+        if (
+            self.state in (SessionState.STREAMING, SessionState.APPROVING)
+            and self.turn_cancel is not None
+        ):
             self.turn_cancel.set()
 
     async def action_cycle_permission_mode(self) -> None:

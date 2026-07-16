@@ -153,9 +153,7 @@ def _accumulate_tool_call_deltas(
         index = getattr(item, "index", None)
         if not isinstance(index, int):
             continue
-        buffer = buffers.setdefault(
-            index, {"id": "", "name": "", "arguments": ""}
-        )
+        buffer = buffers.setdefault(index, {"id": "", "name": "", "arguments": ""})
         call_id = getattr(item, "id", None)
         if isinstance(call_id, str) and call_id:
             buffer["id"] = call_id

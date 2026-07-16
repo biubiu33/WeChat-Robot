@@ -76,9 +76,7 @@ class AnthropicProvider:
                     usage=Usage(
                         input_tokens=_usage_value(usage, "input_tokens"),
                         output_tokens=_usage_value(usage, "output_tokens"),
-                        cache_write=_usage_value(
-                            usage, "cache_creation_input_tokens"
-                        ),
+                        cache_write=_usage_value(usage, "cache_creation_input_tokens"),
                         cache_read=_usage_value(usage, "cache_read_input_tokens"),
                     )
                 )

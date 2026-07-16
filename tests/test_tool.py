@@ -41,7 +41,9 @@ def test_default_registry_exports_six_tools_in_stable_order() -> None:
         "grep",
     ]
     assert all(definition.description for definition in definitions)
-    assert all(definition.input_schema["type"] == "object" for definition in definitions)
+    assert all(
+        definition.input_schema["type"] == "object" for definition in definitions
+    )
     assert registry.get("read_file") is not None
     assert registry.get("missing") is None
     assert [definition.name for definition in registry.read_only_definitions()] == [
@@ -234,9 +236,7 @@ async def test_glob_and_grep(tmp_path: Path) -> None:
     searched = await registry.execute(
         "grep", args(path=str(tmp_path), pattern="needle", glob="**/*.py")
     )
-    empty = await registry.execute(
-        "grep", args(path=str(tmp_path), pattern="absent")
-    )
+    empty = await registry.execute("grep", args(path=str(tmp_path), pattern="absent"))
     invalid = await registry.execute("grep", args(path=str(tmp_path), pattern="["))
 
     assert globbed.content == "pkg/a.py"

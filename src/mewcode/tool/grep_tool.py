@@ -65,7 +65,11 @@ class GrepTool:
                 await asyncio.sleep(0)
             if not file_path.is_file():
                 continue
-            relative = file_path.name if root.is_file() else file_path.relative_to(root).as_posix()
+            relative = (
+                file_path.name
+                if root.is_file()
+                else file_path.relative_to(root).as_posix()
+            )
             if glob_value and not Path(relative).match(glob_value):
                 continue
             try:

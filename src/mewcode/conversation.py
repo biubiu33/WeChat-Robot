@@ -30,9 +30,7 @@ class Conversation:
         )
 
     def add_tool_results(self, results: Sequence[ToolResult]) -> None:
-        self._messages.append(
-            Message(role=ROLE_TOOL, tool_results=list(results))
-        )
+        self._messages.append(Message(role=ROLE_TOOL, tool_results=list(results)))
 
     def messages(self) -> list[Message]:
         return list(self._messages)

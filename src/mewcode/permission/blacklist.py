@@ -11,7 +11,10 @@ BLACKLIST: tuple[re.Pattern[str], ...] = (
         r"(?:^|\s)(?:/(?:\*+)?|~/?(?:\*+)?|\$HOME/?(?:\*+)?)(?:\s|$)",
         re.IGNORECASE,
     ),
-    re.compile(r"\bdd\b[^;\r\n]*\bof\s*=\s*/dev/(?:sd|hd|vd|nvme|disk|loop|mapper)", re.IGNORECASE),
+    re.compile(
+        r"\bdd\b[^;\r\n]*\bof\s*=\s*/dev/(?:sd|hd|vd|nvme|disk|loop|mapper)",
+        re.IGNORECASE,
+    ),
     re.compile(r":\s*\(\s*\)\s*\{[^}]*\|\s*&[^}]*\}", re.IGNORECASE),
     re.compile(r"\bmkfs(?:\.[\w-]+)?\b", re.IGNORECASE),
     re.compile(r">\s*/dev/(?:sd|hd|vd|nvme|disk|loop|mapper)", re.IGNORECASE),

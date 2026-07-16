@@ -310,14 +310,18 @@ class Agent:
                     if decision is Decision.ALLOW:
                         allowed.append(call_index)
                     elif decision is Decision.DENY:
-                        results[call_index] = self._permission_denied_result(call, reason)
+                        results[call_index] = self._permission_denied_result(
+                            call, reason
+                        )
                     else:
                         results[call_index] = self._permission_denied_result(
                             call, "只读工具权限判定异常，安全拒绝"
                         )
                 batch = await self._execute_read_batch(calls, results, allowed, cancel)
                 for call_index in range(index, end):
-                    yield Event(tool=self._tool_end(calls[call_index], results[call_index]))
+                    yield Event(
+                        tool=self._tool_end(calls[call_index], results[call_index])
+                    )
                 if not batch:
                     self._cancel_remaining(calls, results, end)
                     yield _ExecutionOutcome(self._finalize_results(results), False)
@@ -342,7 +346,9 @@ class Agent:
                 if outcome is None:
                     result, completed = self._cancelled_result(call), False
                 elif outcome is Outcome.DENY_ONCE:
-                    result = self._permission_denied_result(call, "用户拒绝本次工具调用")
+                    result = self._permission_denied_result(
+                        call, "用户拒绝本次工具调用"
+                    )
                     completed = True
                 else:
                     if outcome is Outcome.ALLOW_SESSION:
@@ -472,9 +478,7 @@ class Agent:
             phase=Phase.START,
         )
 
-    def _tool_end(
-        self, call: ToolCall, result: ToolResult | None
-    ) -> ToolEvent:
+    def _tool_end(self, call: ToolCall, result: ToolResult | None) -> ToolEvent:
         tool_result = result if result is not None else self._cancelled_result(call)
         return ToolEvent(
             name=call.name,
@@ -514,9 +518,7 @@ class Agent:
             if results[index] is None:
                 results[index] = self._cancelled_result(calls[index])
 
-    def _finalize_results(
-        self, results: list[ToolResult | None]
-    ) -> list[ToolResult]:
+    def _finalize_results(self, results: list[ToolResult | None]) -> list[ToolResult]:
         return [
             result
             if result is not None

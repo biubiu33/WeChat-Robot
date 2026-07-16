@@ -144,9 +144,7 @@ def _elapsed_seconds(app: MewCodeApp) -> int:
 
 async def _start_tool(app: MewCodeApp, name: str, args: str) -> None:
     if app.cur_reply:
-        await app.append_timeline(
-            assistant_entry(app.cur_reply, _elapsed_seconds(app))
-        )
+        await app.append_timeline(assistant_entry(app.cur_reply, _elapsed_seconds(app)))
         app.cur_reply = ""
     app.cur_tools.append(ToolRun(name, args))
     refresh_streaming_view(app)
@@ -160,7 +158,5 @@ async def _finish_tool(
     is_error: bool,
 ) -> None:
     tool = app.cur_tools.pop(0) if app.cur_tools else ToolRun(name, args)
-    await app.append_timeline(
-        tool_result_entry(tool.name, tool.args, result, is_error)
-    )
+    await app.append_timeline(tool_result_entry(tool.name, tool.args, result, is_error))
     refresh_streaming_view(app)

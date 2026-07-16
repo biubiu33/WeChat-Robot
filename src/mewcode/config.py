@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 
 ProtocolName = Literal["anthropic", "openai"]
-CONFIG_ENV_VAR = "MEWCODE_CONFIG"
 CONFIG_RELATIVE_PATH = Path(".mewcode") / "config.yaml"
 
 
@@ -38,29 +35,13 @@ class ConfigDiscoveryResult:
 
 
 def discover_config_path(
-    env: Mapping[str, str] | None = None,
-    cwd: Path | None = None,
     home: Path | None = None,
 ) -> ConfigDiscoveryResult:
-    config_env = os.environ if env is None else env
-    current_dir = Path.cwd() if cwd is None else cwd
     home_dir = Path.home() if home is None else home
-
-    env_path = config_env.get(CONFIG_ENV_VAR, "").strip()
-    if env_path:
-        attempted_paths = [Path(env_path).expanduser()]
-    else:
-        attempted_paths = [
-            current_dir / CONFIG_RELATIVE_PATH,
-            home_dir / CONFIG_RELATIVE_PATH,
-        ]
-
-    for path in attempted_paths:
-        if path.is_file():
-            return ConfigDiscoveryResult(path=path, attempted_paths=attempted_paths)
-
-    attempted = "\n".join(f"- {path}" for path in attempted_paths)
-    raise ConfigError(f"未找到配置文件，已尝试以下位置:\n{attempted}")
+    path = home_dir / CONFIG_RELATIVE_PATH
+    if path.is_file():
+        return ConfigDiscoveryResult(path=path, attempted_paths=[path])
+    raise ConfigError(f"未找到配置文件，已尝试以下位置:\n- {path}")
 
 
 def load(path: str) -> Config:
@@ -110,7 +91,9 @@ def _from_dict(raw: Any) -> Config:
         seen_names.add(name)
 
         base_url = item.get("base_url")
-        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip()):
+        if base_url is not None and (
+            not isinstance(base_url, str) or not base_url.strip()
+        ):
             raise ConfigError(f"providers[{index}].base_url 必须是非空字符串或省略")
 
         thinking = item.get("thinking", False)

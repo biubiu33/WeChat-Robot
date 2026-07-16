@@ -59,9 +59,10 @@ def parse_mode(value: str) -> tuple[Mode, bool]:
     return (mode, True) if mode is not None else (Mode.DEFAULT, False)
 
 
-from .engine import Engine, check, mode_fallback, new_engine
-from .persist import allow_session, persist_local_allow
-from .rule import Rule, RuleSet
+from .engine import Engine, check, mode_fallback, new_engine  # noqa: E402
+from .persist import allow_session, persist_local_allow  # noqa: E402
+from .rule import Rule, RuleSet  # noqa: E402
+
 
 __all__ = [
     "Category",

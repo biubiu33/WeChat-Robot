@@ -17,7 +17,6 @@ from mewcode.llm.anthropic_provider import (
     AnthropicProvider,
     _append_reminder,
     _extract_text_delta as anthropic_text,
-    _extract_tool_calls,
     _has_tool_history,
     to_anthropic_messages,
     to_anthropic_system,
@@ -60,7 +59,9 @@ def test_text_delta_extractors_and_redaction() -> None:
     assert redact_secret("bad sk-secret key", "sk-secret") == "bad *** key"
 
 
-def test_openai_messages_use_two_system_blocks_and_keep_reminder_out_of_history() -> None:
+def test_openai_messages_use_two_system_blocks_and_keep_reminder_out_of_history() -> (
+    None
+):
     call = ToolCall("call-1", "read_file", '{"path":"a.py"}')
     request = Request(
         messages=[
@@ -186,7 +187,9 @@ def test_openai_usage_reads_cache_tokens_and_missing_fields_are_safe() -> None:
 def test_openai_provider_serializes_request_and_streams_usage() -> None:
     captured: dict[str, object] = {}
     chunks = [
-        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="完成"))]),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="完成"))]
+        ),
         SimpleNamespace(
             choices=[],
             usage=SimpleNamespace(
@@ -211,7 +214,9 @@ def test_openai_provider_serializes_request_and_streams_usage() -> None:
             return FakeStream()
 
     provider = object.__new__(OpenAIProvider)
-    provider._client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+    provider._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
     provider._api_key = "secret"
     provider._model = "test-model"
     request = Request(
