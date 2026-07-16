@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import mewcode.cli as cli
 from mewcode.config import ConfigError, discover_config_path, load
+from mewcode.config import Config, ConfigDiscoveryResult, ProviderConfig
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
@@ -139,3 +142,38 @@ def test_discover_config_lists_attempted_paths_when_missing(tmp_path: Path) -> N
     assert "未找到配置文件" in message
     assert str(cwd_config) in message
     assert str(home_config) in message
+
+
+def test_cli_constructs_engine_from_startup_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    provider = ProviderConfig(
+        name="test", protocol="openai", api_key="test-key", model="test-model"
+    )
+    captured: dict[str, object] = {}
+
+    class FakeApp:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+
+        def run(self) -> None:
+            captured["ran"] = True
+
+    import mewcode.tui.app as tui_app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "discover_config_path",
+        lambda: ConfigDiscoveryResult(config_path, [config_path]),
+    )
+    monkeypatch.setattr(cli, "load", lambda path: Config([provider]))
+    monkeypatch.setattr(tui_app, "MewCodeApp", FakeApp)
+
+    cli.main()
+
+    engine = captured["kwargs"]["engine"]  # type: ignore[index]
+    assert engine.root == tmp_path.resolve()
+    assert captured["ran"] is True

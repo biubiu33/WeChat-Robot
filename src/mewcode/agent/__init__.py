@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from enum import Enum, IntEnum
+from enum import Enum
+from pathlib import Path
 
 from mewcode import __version__
 from mewcode.conversation import Conversation
@@ -19,6 +20,7 @@ from mewcode.llm import (
     Usage as LlmUsage,
 )
 from mewcode.prompt import build_system_prompt, gather_environment, plan_reminder
+from mewcode.permission import Decision, Engine, Mode, Outcome, new_engine
 from mewcode.tool import DEFAULT_TIMEOUT, Registry, Result, error_result
 
 MAX_ITERATIONS = 25
@@ -35,11 +37,6 @@ EMPTY_RESPONSE_MESSAGE = "模型未返回文本内容。"
 class Phase(Enum):
     START = "start"
     END = "end"
-
-
-class Mode(IntEnum):
-    NORMAL = 0
-    PLAN = 1
 
 
 @dataclass(frozen=True)
@@ -59,6 +56,14 @@ class ToolEvent:
     is_error: bool = False
 
 
+@dataclass
+class ApprovalRequest:
+    name: str
+    args: str
+    reason: str
+    respond: asyncio.Future[Outcome]
+
+
 @dataclass(frozen=True)
 class Event:
     text: str = ""
@@ -68,6 +73,7 @@ class Event:
     notice: str = ""
     done: bool = False
     err: Exception | None = None
+    approval: ApprovalRequest | None = None
 
 
 @dataclass(frozen=True)
@@ -85,15 +91,17 @@ class Agent:
         provider: Provider,
         registry: Registry,
         version: str = __version__,
+        engine: Engine | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
         self._version = version
+        self._engine = engine if engine is not None else new_engine(Path.cwd())[0]
 
     async def run(
         self,
         conv: Conversation,
-        mode: Mode = Mode.NORMAL,
+        mode: Mode = Mode.DEFAULT,
         cancel: asyncio.Event | None = None,
     ) -> AsyncIterator[Event]:
         cancel_event = cancel if cancel is not None else asyncio.Event()
@@ -161,6 +169,7 @@ class Agent:
             async for item in self._execute_batched(
                 outcome.calls,
                 cancel_event,
+                mode=mode,
                 read_only_only=mode is Mode.PLAN,
             ):
                 if isinstance(item, Event):
@@ -252,6 +261,7 @@ class Agent:
         calls: list[ToolCall],
         cancel: asyncio.Event,
         *,
+        mode: Mode,
         read_only_only: bool,
     ) -> AsyncIterator[Event | _ExecutionOutcome]:
         results: list[ToolResult | None] = [None] * len(calls)
@@ -272,13 +282,40 @@ class Agent:
                 index += 1
                 continue
 
+            if self._registry.get(calls[index].name) is None:
+                call = calls[index]
+                yield Event(tool=self._tool_start(call))
+                result = self._permission_denied_result(
+                    call, f"未知工具 {call.name}，安全拒绝"
+                )
+                results[index] = result
+                yield Event(tool=self._tool_end(call, result))
+                index += 1
+                continue
+
             if self._registry.is_read_only(calls[index].name):
                 end = index + 1
-                while end < len(calls) and self._registry.is_read_only(calls[end].name):
+                while (
+                    end < len(calls)
+                    and self._registry.get(calls[end].name) is not None
+                    and self._registry.is_read_only(calls[end].name)
+                ):
                     end += 1
                 for call in calls[index:end]:
                     yield Event(tool=self._tool_start(call))
-                batch = await self._execute_read_batch(calls, results, index, end, cancel)
+                allowed: list[int] = []
+                for call_index in range(index, end):
+                    call = calls[call_index]
+                    decision, reason = self._engine.check(mode, call, True)
+                    if decision is Decision.ALLOW:
+                        allowed.append(call_index)
+                    elif decision is Decision.DENY:
+                        results[call_index] = self._permission_denied_result(call, reason)
+                    else:
+                        results[call_index] = self._permission_denied_result(
+                            call, "只读工具权限判定异常，安全拒绝"
+                        )
+                batch = await self._execute_read_batch(calls, results, allowed, cancel)
                 for call_index in range(index, end):
                     yield Event(tool=self._tool_end(calls[call_index], results[call_index]))
                 if not batch:
@@ -290,7 +327,32 @@ class Agent:
 
             call = calls[index]
             yield Event(tool=self._tool_start(call))
-            result, completed = await self._execute_one(call, cancel)
+            decision, reason = self._engine.check(mode, call, False)
+            if decision is Decision.ALLOW:
+                result, completed = await self._execute_one(call, cancel)
+            elif decision is Decision.DENY:
+                result, completed = self._permission_denied_result(call, reason), True
+            else:
+                outcome: Outcome | None = None
+                async for item in self._request_approval(call, reason, cancel):
+                    if isinstance(item, Event):
+                        yield item
+                    else:
+                        outcome = item
+                if outcome is None:
+                    result, completed = self._cancelled_result(call), False
+                elif outcome is Outcome.DENY_ONCE:
+                    result = self._permission_denied_result(call, "用户拒绝本次工具调用")
+                    completed = True
+                else:
+                    if outcome is Outcome.ALLOW_SESSION:
+                        self._engine.allow_session(call)
+                    elif outcome is Outcome.ALLOW_FOREVER:
+                        try:
+                            self._engine.persist_local_allow(call)
+                        except Exception:
+                            pass
+                    result, completed = await self._execute_one(call, cancel)
             results[index] = result
             yield Event(tool=self._tool_end(call, result))
             if not completed:
@@ -305,13 +367,12 @@ class Agent:
         self,
         calls: list[ToolCall],
         results: list[ToolResult | None],
-        start: int,
-        end: int,
+        indexes: list[int],
         cancel: asyncio.Event,
     ) -> bool:
         tasks = [
             asyncio.create_task(self._execute_one(calls[index], cancel))
-            for index in range(start, end)
+            for index in indexes
         ]
         completed = True
         try:
@@ -322,10 +383,41 @@ class Agent:
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
-        for offset, (result, item_completed) in enumerate(batch_results):
-            results[start + offset] = result
+        for index, (result, item_completed) in zip(indexes, batch_results, strict=True):
+            results[index] = result
             completed = completed and item_completed
         return completed
+
+    async def _request_approval(
+        self,
+        call: ToolCall,
+        reason: str,
+        cancel: asyncio.Event,
+    ) -> AsyncIterator[Event | Outcome | None]:
+        future: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+        yield Event(
+            approval=ApprovalRequest(
+                name=call.name,
+                args=self._redact(call.input),
+                reason=reason,
+                respond=future,
+            )
+        )
+        cancelled = asyncio.create_task(cancel.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {future, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done:
+                if not future.done():
+                    future.cancel()
+                yield None
+                return
+            yield future.result()
+        finally:
+            if not cancelled.done():
+                cancelled.cancel()
+            await asyncio.gather(cancelled, return_exceptions=True)
 
     async def _execute_one(
         self,
@@ -399,6 +491,9 @@ class Agent:
             is_error=result.is_error,
         )
 
+    def _permission_denied_result(self, call: ToolCall, reason: str) -> ToolResult:
+        return self._to_tool_result(call, error_result("permission_denied", reason))
+
     def _cancelled_result(self, call: ToolCall) -> ToolResult:
         return ToolResult(call.id, NOTICE_CANCELLED, is_error=True)
 
@@ -452,6 +547,7 @@ class _ExecutionOutcome:
 
 __all__ = [
     "Agent",
+    "ApprovalRequest",
     "Event",
     "MAX_ITERATIONS",
     "MAX_UNKNOWN_RUN",

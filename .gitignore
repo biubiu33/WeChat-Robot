@@ -29,6 +29,7 @@ ENV/
 .env.*
 *.local
 .mewcode/config.yaml
+.mewcode/settings.local.yaml
 
 # Logs and temporary files
 *.log

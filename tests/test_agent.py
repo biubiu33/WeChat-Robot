@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
+from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 import mewcode.agent as agent_module
 from mewcode.agent import (
     Agent,
+    ApprovalRequest,
     MAX_ITERATIONS,
     MAX_UNKNOWN_RUN,
     Mode,
@@ -21,6 +23,7 @@ from mewcode.agent import (
 )
 from mewcode.conversation import Conversation
 from mewcode.llm import Request, StreamEvent, ToolCall, ToolDefinition, Usage
+from mewcode.permission import Mode, Outcome, new_engine
 from mewcode.tool import Registry, Result, new_default_registry
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -116,7 +119,7 @@ class RecordingTool:
             self._log.append(f"end:{self._name}")
 
 
-async def collect(agent: Agent, conv: Conversation, mode=Mode.NORMAL, cancel=None):
+async def collect(agent: Agent, conv: Conversation, mode=Mode.BYPASS, cancel=None):
     cancel_event = cancel if cancel is not None else asyncio.Event()
     return [event async for event in agent.run(conv, mode, cancel_event)]
 
@@ -397,3 +400,134 @@ async def test_stream_error_stops_and_preserves_assistant_tail() -> None:
     assert isinstance(next(event.err for event in events if event.err), RuntimeError)
     assert conv.last_role() == "assistant"
     assert "请求出错" in conv.messages()[-1].content
+
+
+async def _next_approval(
+    agent: Agent, conv: Conversation
+) -> tuple[AsyncIterator[object], ApprovalRequest]:
+    stream = agent.run(conv, Mode.DEFAULT).__aiter__()
+    while True:
+        event = await anext(stream)
+        if event.approval is not None:
+            return stream, event.approval
+
+
+@async_test
+async def test_permission_blacklist_denies_and_agent_loop_continues(
+    tmp_path: Path,
+) -> None:
+    dangerous = ToolCall("danger", "bash", '{"command":"rm -rf /"}')
+    provider = FakeProvider(
+        [
+            [StreamEvent(tool_calls=[dangerous]), StreamEvent(done=True)],
+            [StreamEvent(text="已改用安全方案"), StreamEvent(done=True)],
+        ]
+    )
+    log: list[str] = []
+    registry = Registry()
+    registry.register(RecordingTool("bash", log))
+    engine, err = new_engine(tmp_path)
+    conv = Conversation()
+    conv.add_user("清理目录")
+
+    assert err is None
+    events = await collect(Agent(provider, registry, engine=engine), conv, Mode.BYPASS)
+
+    assert log == []
+    assert any(event.tool and event.tool.is_error for event in events)
+    result = conv.messages()[2].tool_results[0]
+    assert result.tool_call_id == "danger"
+    assert result.is_error and "permission_denied" in result.content
+    assert conv.messages()[-1].content == "已改用安全方案"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "should_run"),
+    [
+        (Outcome.ALLOW_ONCE, True),
+        (Outcome.ALLOW_SESSION, True),
+        (Outcome.ALLOW_FOREVER, True),
+        (Outcome.DENY_ONCE, False),
+    ],
+)
+@async_test
+async def test_permission_approval_outcomes(
+    tmp_path: Path, outcome: Outcome, should_run: bool
+) -> None:
+    requested = ToolCall(
+        "write", "write_file", '{"path":"src/a.py","content":"x"}'
+    )
+    provider = FakeProvider(
+        [
+            [StreamEvent(tool_calls=[requested]), StreamEvent(done=True)],
+            [StreamEvent(text="处理完毕"), StreamEvent(done=True)],
+        ]
+    )
+    log: list[str] = []
+    registry = Registry()
+    registry.register(RecordingTool("write_file", log))
+    engine, err = new_engine(tmp_path)
+    conv = Conversation()
+    conv.add_user("写入文件")
+
+    assert err is None
+    stream, approval = await _next_approval(
+        Agent(provider, registry, engine=engine), conv
+    )
+    assert approval.name == "write_file"
+    assert "文件写入" in approval.reason
+    approval.respond.set_result(outcome)
+    events = [event async for event in stream]
+
+    assert bool(log) is should_run
+    result = conv.messages()[2].tool_results[0]
+    assert result.tool_call_id == "write"
+    assert result.is_error is (not should_run)
+    assert events[-1].done
+    if outcome is Outcome.ALLOW_SESSION:
+        followup = ToolCall("again", "write_file", '{"path":"src/a.py","content":"y"}')
+        followup_provider = FakeProvider(
+            [
+                [StreamEvent(tool_calls=[followup]), StreamEvent(done=True)],
+                [StreamEvent(text="再次完成"), StreamEvent(done=True)],
+            ]
+        )
+        conv.add_user("再次写入")
+        followup_events = await collect(
+            Agent(followup_provider, registry, engine=engine), conv, Mode.DEFAULT
+        )
+        assert not any(event.approval is not None for event in followup_events)
+    if outcome is Outcome.ALLOW_FOREVER:
+        rebuilt, rebuilt_err = new_engine(tmp_path)
+        assert rebuilt_err is None
+        assert rebuilt.local.allow
+
+
+@async_test
+async def test_cancel_while_waiting_for_permission_keeps_history_usable(
+    tmp_path: Path,
+) -> None:
+    requested = ToolCall(
+        "write", "write_file", '{"path":"a.txt","content":"x"}'
+    )
+    provider = FakeProvider([[StreamEvent(tool_calls=[requested]), StreamEvent(done=True)]])
+    registry = Registry()
+    registry.register(RecordingTool("write_file", []))
+    engine, err = new_engine(tmp_path)
+    conv = Conversation()
+    conv.add_user("需要确认")
+    cancel = asyncio.Event()
+    agent = Agent(provider, registry, engine=engine)
+    stream = agent.run(conv, Mode.DEFAULT, cancel).__aiter__()
+
+    assert err is None
+    while True:
+        event = await anext(stream)
+        if event.approval is not None:
+            break
+    cancel.set()
+    events = [event async for event in stream]
+
+    assert any(event.notice == NOTICE_CANCELLED for event in events)
+    assert conv.last_role() == "assistant"
+    assert conv.messages()[-2].role == "tool"

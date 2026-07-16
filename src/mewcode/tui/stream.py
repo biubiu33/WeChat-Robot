@@ -12,6 +12,7 @@ from .view import (
     assistant_entry,
     error_entry,
     notice_entry,
+    approval_block,
     streaming_block,
     tool_result_entry,
     tools_running_block,
@@ -26,10 +27,16 @@ async def consume_stream(app: MewCodeApp) -> None:
         return
 
     try:
-        agent = Agent(app.provider, app.registry, app.version)
+        agent = Agent(app.provider, app.registry, app.version, app.engine)
         cancel = app.turn_cancel if app.turn_cancel is not None else asyncio.Event()
         saw_error = False
         async for event in agent.run(app.conv, app.mode, cancel):
+            if event.approval is not None:
+                app.pending = event.approval
+                app.approve_cursor = 0
+                app.state = app.state.__class__.APPROVING
+                refresh_approval_view(app)
+                continue
             if event.err is not None:
                 await app.append_timeline(error_entry(event.err))
                 saw_error = True
@@ -84,6 +91,19 @@ def refresh_streaming_view(app: MewCodeApp) -> None:
     app.query_one("#streaming", Static).update(block)
 
 
+def refresh_approval_view(app: MewCodeApp) -> None:
+    if app.pending is None:
+        return
+    app.query_one("#streaming", Static).update(
+        approval_block(
+            app.pending.name,
+            app.pending.args,
+            app.pending.reason,
+            app.approve_cursor,
+        )
+    )
+
+
 async def finish_with_assistant(
     app: MewCodeApp, reply: str, *, save: bool = True
 ) -> None:
@@ -109,6 +129,8 @@ def _finish_turn(app: MewCodeApp) -> None:
     app.cur_tools = []
     app.iter = 0
     app.turn_cancel = None
+    app.pending = None
+    app.approve_cursor = 0
     app.state = app.state.__class__.IDLE
     app.query_one("#streaming", Static).update("")
     input_area = app.query_one("#input", TextArea)

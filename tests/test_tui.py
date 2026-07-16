@@ -8,12 +8,13 @@ from typing import Any, TypeVar
 
 from rich.console import Console
 from mewcode.config import ProviderConfig
-from mewcode.agent import Mode
+from mewcode.permission import Mode
 from mewcode.llm import Request, StreamEvent, ToolCall, Usage
 from mewcode.tool import Registry, Result, new_default_registry
 from mewcode.tui.app import MewCodeApp, SessionState
 from mewcode.tui.timeline import Timeline
 from mewcode.tui.view import (
+    approval_block,
     assistant_entry,
     error_entry,
     notice_entry,
@@ -224,7 +225,7 @@ async def test_tool_events_create_collapsed_timeline_result_and_clear_activity()
             if self.requests == 1:
                 yield StreamEvent(text="先读取")
                 yield StreamEvent(
-                    tool_calls=[ToolCall("call-1", "read_file", "{}")]
+                    tool_calls=[ToolCall("call-1", "read_file", '{"path":"a.txt"}')]
                 )
                 yield StreamEvent(done=True)
                 return
@@ -355,6 +356,139 @@ async def test_tui_provider_error_keeps_conversation_valid_and_recovers() -> Non
         assert "请求出错" in app.conv.messages()[-1].content
 
 
+@async_test
+async def test_tui_approval_menu_allows_once_and_mode_cycles() -> None:
+    class ApprovalProvider(FakeProvider):
+        async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
+            self.requests += 1
+            if self.requests == 1:
+                yield StreamEvent(
+                    tool_calls=[
+                        ToolCall(
+                            "write-1",
+                            "write_file",
+                            '{"path":"a.txt","content":"x"}',
+                        )
+                    ]
+                )
+                yield StreamEvent(done=True)
+                return
+            yield StreamEvent(text="写入完成")
+            yield StreamEvent(done=True)
+
+    config = ProviderConfig(
+        name="fake", protocol="openai", api_key="test-key", model="fake-model"
+    )
+    registry = Registry()
+    log: list[str] = []
+    registry.register(RecordingWriteTool(log))
+    app = MewCodeApp([config], registry=registry)
+    provider = ApprovalProvider()
+
+    async with app.run_test() as pilot:
+        app.provider = provider
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.mode is Mode.ACCEPT_EDITS
+        for expected in (Mode.PLAN, Mode.BYPASS, Mode.DEFAULT):
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            assert app.mode is expected
+        assert app.mode is Mode.DEFAULT
+
+        input_area = app.query_one("#input")
+        input_area.text = "写入文件"
+        await app.submit_current_input()
+        for _ in range(100):
+            if app.state is SessionState.APPROVING:
+                break
+            await asyncio.sleep(0.01)
+        assert app.state is SessionState.APPROVING
+        assert app.pending is not None
+        assert "允许本会话" in _render(
+            approval_block(
+                app.pending.name,
+                app.pending.args,
+                app.pending.reason,
+                app.approve_cursor,
+            )
+        )
+        await pilot.press("1")
+        await _wait_until_idle(app)
+
+    assert log == ["write"]
+    assert app.conv.messages()[-1].content == "写入完成"
+
+
+@async_test
+async def test_tui_escape_cancels_approval_and_allows_followup() -> None:
+    class ApprovalThenReplyProvider(FakeProvider):
+        async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
+            self.requests += 1
+            if self.requests == 1:
+                yield StreamEvent(
+                    tool_calls=[
+                        ToolCall(
+                            "write-1",
+                            "write_file",
+                            '{"path":"a.txt","content":"x"}',
+                        )
+                    ]
+                )
+                yield StreamEvent(done=True)
+                return
+            yield StreamEvent(text="后续正常")
+            yield StreamEvent(done=True)
+
+    config = ProviderConfig(
+        name="fake", protocol="openai", api_key="test-key", model="fake-model"
+    )
+    registry = Registry()
+    registry.register(RecordingWriteTool([]))
+    app = MewCodeApp([config], registry=registry)
+    provider = ApprovalThenReplyProvider()
+
+    async with app.run_test() as pilot:
+        app.provider = provider
+        input_area = app.query_one("#input")
+        input_area.text = "需要批准"
+        await app.submit_current_input()
+        for _ in range(100):
+            if app.state is SessionState.APPROVING:
+                break
+            await asyncio.sleep(0.01)
+        assert app.state is SessionState.APPROVING
+        await pilot.press("escape")
+        await _wait_until_idle(app)
+        assert input_area.read_only is False and input_area.has_focus
+
+        input_area.text = "继续"
+        await app.submit_current_input()
+        await _wait_until_idle(app)
+
+    assert app.conv.messages()[-1].content == "后续正常"
+
+
+class RecordingWriteTool:
+    read_only = False
+
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+
+    def name(self) -> str:
+        return "write_file"
+
+    def description(self) -> str:
+        return "写入测试文件"
+
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, args: str) -> Result:
+        self.log.append("write")
+        return Result("done")
+
+
 def test_tool_line_only_previews_safe_key_argument() -> None:
     rendered = tool_line(
         "write_file",
@@ -373,13 +507,23 @@ def test_tool_result_summary_limits_visible_lines() -> None:
     assert "[truncated]" in rendered.plain
 
 
+def test_approval_block_shows_all_four_options() -> None:
+    rendered = _render(approval_block("write_file", '{"path":"a.py"}', "需要确认", 1))
+
+    assert "允许本次" in rendered
+    assert "允许本会话" in rendered
+    assert "永久允许" in rendered
+    assert "拒绝本次" in rendered
+    assert "> 2." in rendered
+
+
 def test_status_bar_shows_plan_mode_and_compact_usage() -> None:
-    rendered = status_bar("fake", "model", Mode.PLAN, 1200, 9)
+    rendered = status_bar("model", Mode.PLAN, 1200, 9)
     output = StringIO()
     Console(file=output, force_terminal=False).print(rendered)
 
     text = output.getvalue()
-    assert "PLAN" in text
+    assert "权限: PLAN" in text
     assert "1.2k" in text
     assert "↑" in text and "↓" in text
 

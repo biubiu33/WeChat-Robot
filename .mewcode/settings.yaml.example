@@ -1,0 +1,8 @@
+# 可提交到项目的权限规则示例。
+default_mode: default
+permissions:
+  allow:
+    - "Bash(git *)"
+    - "Write(src/**)"
+  deny:
+    - "Bash(git push)"

@@ -26,13 +26,13 @@ def test_render_banner_contains_identity_cwd_and_ready_line() -> None:
 def test_system_prompt_has_stable_order_and_key_agent_rules() -> None:
     prompt = build_system_prompt()
     headings = [
-        "## 身份",
-        "## 系统约束",
-        "## 任务模式",
-        "## 动作执行",
-        "## 工具使用",
-        "## 语气风格",
-        "## 文本输出",
+        "## 角色设定",
+        "## 行为准则",
+        "## 工具使用指南",
+        "## 代码质量规范",
+        "## 安全边界",
+        "## 任务执行模式",
+        "## 输出风格",
     ]
 
     assert [prompt.index(heading) for heading in headings] == sorted(

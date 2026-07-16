@@ -8,7 +8,7 @@ from rich.table import Table
 from rich.text import Text
 from textual.widgets import Collapsible, Static
 
-from mewcode.agent import Mode
+from mewcode.permission import Mode
 
 
 def user_entry(text: str) -> Static:
@@ -127,18 +127,16 @@ def _argument_preview(name: str, args: str) -> str:
 
 
 def status_bar(
-    provider_name: str,
     model: str,
-    mode: Mode = Mode.NORMAL,
+    mode: Mode = Mode.DEFAULT,
     usage_in: int = 0,
     usage_out: int = 0,
 ) -> Table:
     table = Table.grid(expand=True)
     table.add_column(justify="left")
     table.add_column(justify="right")
-    plan = " [PLAN]" if mode is Mode.PLAN else ""
     usage = f"↑{_compact_tokens(usage_in)} ↓{_compact_tokens(usage_out)} tok"
-    table.add_row(f"Provider: {provider_name}{plan}", f"Model: {model}  {usage}")
+    table.add_row(f"权限: {_mode_label(mode)}", f"Model: {model}  {usage}")
     return table
 
 
@@ -154,3 +152,32 @@ def selecting_status() -> Table:
     table.add_column(justify="right")
     table.add_row("请选择 provider", "Enter 确认")
     return table
+
+
+def approval_block(name: str, args: str, reason: str, cursor: int) -> Group:
+    options = (
+        "允许本次",
+        "允许本会话",
+        "永久允许（写入本地配置）",
+        "拒绝本次",
+    )
+    rows: list[Text] = [
+        tool_line(name, args),
+        Text(f"  {reason}", style="dim"),
+        Text("是否继续?", style="bold"),
+    ]
+    for index, option in enumerate(options):
+        marker = "> " if index == cursor else "  "
+        style = "bold cyan" if index == cursor else ""
+        rows.append(Text(f"{marker}{index + 1}. {option}", style=style))
+    rows.append(Text("↑↓ 选择 · Enter 确认 · Esc 取消", style="dim"))
+    return Group(*rows)
+
+
+def _mode_label(mode: Mode) -> str:
+    return {
+        Mode.DEFAULT: "DEFAULT",
+        Mode.ACCEPT_EDITS: "ACCEPT EDITS",
+        Mode.PLAN: "PLAN",
+        Mode.BYPASS: "BYPASS",
+    }[mode]

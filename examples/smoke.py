@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from pathlib import Path
 
 from mewcode.agent import Agent
 from mewcode.config import ConfigError, discover_config_path, load
 from mewcode.conversation import Conversation
 from mewcode.llm import new_provider
+from mewcode.permission import Mode, new_engine
 from mewcode.tool import new_default_registry
 
 
@@ -23,12 +25,17 @@ async def run(profile: str, first: str, second: str) -> None:
         names = ", ".join(item.name for item in config.providers)
         raise SystemExit(f"未找到 profile: {profile}；可用值: {names}")
 
-    agent = Agent(new_provider(selected), new_default_registry(), version="smoke")
+    engine, engine_error = new_engine(Path.cwd())
+    if engine_error is not None:
+        raise SystemExit(f"权限引擎初始化失败: {engine_error}")
+    agent = Agent(
+        new_provider(selected), new_default_registry(), version="smoke", engine=engine
+    )
     conversation = Conversation()
     for index, text in enumerate((first, second), start=1):
         conversation.add_user(text)
         print(f"\n--- 第 {index} 轮 ---")
-        async for event in agent.run(conversation):
+        async for event in agent.run(conversation, Mode.BYPASS):
             if event.text:
                 print(event.text, end="", flush=True)
             if event.usage is not None:
