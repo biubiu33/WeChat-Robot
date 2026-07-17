@@ -21,6 +21,7 @@ class ProviderConfig:
     model: str
     base_url: str | None = None
     thinking: bool = False
+    context_window: int = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,14 @@ def _from_dict(raw: Any) -> Config:
         if not isinstance(thinking, bool):
             raise ConfigError(f"providers[{index}].thinking 必须是布尔值")
 
+        context_window = item.get("context_window", 1_000_000)
+        if (
+            isinstance(context_window, bool)
+            or not isinstance(context_window, int)
+            or context_window <= 0
+        ):
+            raise ConfigError(f"providers[{index}].context_window 必须是正整数或省略")
+
         providers.append(
             ProviderConfig(
                 name=name,
@@ -108,6 +117,7 @@ def _from_dict(raw: Any) -> Config:
                 model=model,
                 base_url=base_url.strip() if isinstance(base_url, str) else None,
                 thinking=thinking,
+                context_window=context_window,
             )
         )
 

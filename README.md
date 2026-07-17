@@ -46,6 +46,16 @@ uv sync
 mewcode
 ```
 
+使用 Conda 时，先激活安装 MewCode 的环境，再进入要操作的项目根目录启动：
+
+```powershell
+conda activate mewcode
+Set-Location D:\path\to\your-project
+mewcode
+```
+
+项目根目录决定当前工作区、权限规则、项目指令、会话档案、缓存和项目级记忆的存放位置。
+
 ## 配置
 
 Provider 配置采用 UTF-8 YAML，顶层字段为 `providers`，固定读取用户目录的 `~/.mewcode/config.yaml`。MCP Server 配置固定读取同一目录的 `~/.mewcode/mcp.yaml`，顶层字段为 `mcp_servers`。两份配置互不合并，也不读取项目目录或环境变量指定路径。
@@ -67,6 +77,7 @@ providers:
     model: claude-3-5-sonnet-latest
     base_url: https://api.anthropic.com
     thinking: true
+    context_window: 200000
 
   - name: openai
     protocol: openai
@@ -85,6 +96,7 @@ providers:
 | `model` | 模型名。 |
 | `base_url` | 可选的自定义或兼容端点；省略时使用 SDK 默认端点。 |
 | `thinking` | 可选，仅 Anthropic 生效。工具调用历史存在后会自动关闭扩展思考，以保持工具循环兼容。 |
+| `context_window` | 可选，模型上下文窗口的 Token 上限；省略时为 `1000000`。Chapter 08 的压缩控制器将使用该值。 |
 
 MCP 配置示例见 [`.mewcode/mcp-servers.example.yaml`](.mewcode/mcp-servers.example.yaml)。复制为 `$HOME\.mewcode\mcp.yaml` 后，按需设置其中引用的环境变量。每个 Server 必须显式声明 `type: stdio` 或 `type: http`；`env` 和 `headers` 的值支持 `${VAR}` 展开。
 
@@ -108,8 +120,45 @@ python -m mewcode
 | Alt+Enter | 在输入框插入换行。 |
 | `/plan` | 进入计划模式；随后发送任务时只开放 `read_file`、`glob`、`grep`。 |
 | `/do` | 退出计划模式并发送执行指令，恢复全部工具。 |
+| `/compact` | 手动压缩当前模型上下文；TUI 历史和 JSONL 档案不会被改写。 |
+| `/resume` | 打开历史会话列表；输入关键词筛选、方向键选择、Enter 恢复、Esc 取消。每条记录右侧的 `X` 可删除该会话。 |
 | Esc / 流式状态 Ctrl+C | 取消当前 Agent Loop，保留会话继续对话。 |
 | 空闲状态 Ctrl+C / `/exit` | 退出程序。 |
+
+### 会话与恢复
+
+选定 Provider 本身不会创建会话档案；首次真正提交给 Agent 的用户消息后才创建新会话。首条用户消息提交后，MewCode 会在后台生成简短标题；生成失败时使用首条消息的清理截断文本。
+
+输入 `/resume` 可切换到历史会话。列表按最后活动时间排序，展示标题、会话 ID、相对时间、消息数、模型和档案大小。恢复后：
+
+- TUI 重放完整的原始用户、助手、工具和状态事件；已压缩的早期内容不会替代可见历史。
+- 模型 Prompt Context 从压缩检查点和近期原文重建；恢复超过七天的会话时，模型会收到重新检查工作区状态的提醒。
+- 后续消息继续追加到同一会话档案。
+
+需要删除会话时，点击对应记录右侧的 `X`。该操作删除 JSONL 档案和同 ID 工具缓存，并立即刷新列表；不会删除项目级或用户级长期记忆。
+
+会话和工具产物位于当前项目下，默认写入 `.gitignore`：
+
+```text
+.mewcode/
+├── sessions/    # 每个会话一个 JSONL 档案
+├── cache/       # 按会话存放的大型工具结果
+└── memory/      # 项目级自动记忆与 MEMORY.md 索引
+```
+
+超过 30 天的会话档案和对应缓存会在启动后及打开 `/resume` 前自动清理；项目级长期记忆不会随会话清理删除。
+
+### 项目指令与记忆
+
+启动时会一次性读取下列手写指令文件，并按从高到低的优先级注入模型上下文：
+
+1. `<项目根>/MEWCODE.md`
+2. `<项目根>/.mewcode/MEWCODE.md`
+3. `~/.mewcode/MEWCODE.md`
+
+指令支持独占行形式的 `@include <relative_path>`，最大嵌套五层；引用不能跳出项目根或用户 `.mewcode` 目录。修改指令后需重启 MewCode 才会生效。
+
+自然完成的 Agent 回合会异步提取用户偏好、纠正反馈、项目知识和参考资料。用户级笔记存于 `~/.mewcode/memory/`，项目知识和参考资料存于项目 `.mewcode/memory/`；更新不会阻塞下一轮输入。
 
 ## 工具与执行方式
 
@@ -147,10 +196,13 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
+## 项目进度
+
+- 已完成：多 Provider 流式 Agent、内置文件/命令工具、权限控制、计划模式，以及 stdio 和 Streamable HTTP MCP 工具发现与注册。
+- 已完成 Chapter 08 上下文与记忆系统：Provider `context_window`、隐藏系统上下文、工具结果缓存、九段式摘要和熔断、JSONL 会话档案、异步标题、三层项目指令、两级自动记忆、`/compact`、`/resume` 与会话重放。
+
 ## 当前限制
 
-- 不支持项目级指令文件、自动长期记忆、真实 MCP 连接或 Skill 自动发现。
-- 不进行上下文压缩、历史裁剪或会话持久化。
-- 不提供工具权限确认、执行沙箱或路径白名单。
+- 不支持 Skill 自动发现。
 - 不提供运行中切换 Provider/模型的命令。
 - 缓存命中由 Provider 决定，OpenAI 兼容端点可能不返回 `cached_tokens`。

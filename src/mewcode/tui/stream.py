@@ -27,7 +27,16 @@ async def consume_stream(app: MewCodeApp) -> None:
         return
 
     try:
-        agent = Agent(app.provider, app.registry, app.version, app.engine)
+        agent = Agent(
+            app.provider,
+            app.registry,
+            app.version,
+            app.engine,
+            context=app.runtime.context if app.runtime is not None else None,
+            prompt_supplier=(
+                lambda: (app.instructions.content, app.memory_manager.prompt_index())
+            ),
+        )
         cancel = app.turn_cancel if app.turn_cancel is not None else asyncio.Event()
         saw_error = False
         async for event in agent.run(app.conv, app.mode, cancel):
@@ -39,6 +48,8 @@ async def consume_stream(app: MewCodeApp) -> None:
                 continue
             if event.err is not None:
                 await app.append_timeline(error_entry(event.err))
+                if app.runtime is not None:
+                    app.runtime.writer.append_visible("error", str(event.err))
                 saw_error = True
                 continue
             if event.tool is not None:
@@ -58,6 +69,8 @@ async def consume_stream(app: MewCodeApp) -> None:
                 app.refresh_status()
             if event.notice:
                 await app.append_timeline(notice_entry(event.notice))
+                if app.runtime is not None:
+                    app.runtime.writer.append_visible("notice", event.notice)
             if event.iter:
                 app.iter = event.iter
                 refresh_streaming_view(app)
@@ -66,6 +79,12 @@ async def consume_stream(app: MewCodeApp) -> None:
                     _finish_turn(app)
                 else:
                     await finish_with_assistant(app, app.cur_reply, save=False)
+                if event.natural and app.memory_enabled:
+                    asyncio.create_task(
+                        app.memory_manager.update_after_turn(
+                            app.conv.messages(), app.provider
+                        )
+                    )
                 return
             if event.text:
                 app.cur_reply += event.text

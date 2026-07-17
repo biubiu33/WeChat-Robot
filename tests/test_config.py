@@ -26,6 +26,7 @@ providers:
     api_key: sk-ant-secret
     model: claude-3-5-sonnet-latest
     thinking: true
+    context_window: 200000
   - name: openai
     protocol: openai
     api_key: sk-secret
@@ -39,7 +40,9 @@ providers:
     assert len(cfg.providers) == 2
     assert cfg.providers[0].name == "claude"
     assert cfg.providers[0].thinking is True
+    assert cfg.providers[0].context_window == 200000
     assert cfg.providers[1].base_url == "https://api.openai.com/v1"
+    assert cfg.providers[1].context_window == 1_000_000
 
 
 @pytest.mark.parametrize(
@@ -64,6 +67,17 @@ providers:
     model: demo
 """,
             "api_key 不能为空",
+        ),
+        (
+            """
+providers:
+  - name: bad
+    protocol: openai
+    api_key: sk-secret
+    model: demo
+    context_window: 0
+""",
+            "context_window 必须是正整数",
         ),
     ],
 )

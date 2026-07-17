@@ -57,6 +57,7 @@ class System:
 
     stable: str = ""
     environment: str = ""
+    context: str = ""
 
 
 @dataclass(frozen=True)

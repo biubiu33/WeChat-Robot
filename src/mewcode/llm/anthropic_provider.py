@@ -123,6 +123,8 @@ def to_anthropic_system(req: Request) -> list[dict[str, Any]]:
         )
     if req.system.environment:
         blocks.append({"type": "text", "text": req.system.environment})
+    if req.system.context:
+        blocks.append({"type": "text", "text": req.system.context})
     return blocks
 
 

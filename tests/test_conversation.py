@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mewcode.conversation import Conversation
-from mewcode.llm import ToolCall, ToolResult
+from mewcode.llm import Message, ToolCall, ToolResult
 
 
 def test_conversation_keeps_order_and_returns_copy() -> None:
@@ -61,3 +61,28 @@ def test_conversation_reports_last_role() -> None:
 
     conv.add_assistant("收到")
     assert conv.last_role() == "assistant"
+
+
+def test_conversation_accepts_restored_messages_and_replaces_prompt_context() -> None:
+    initial = [Message(role="user", content="恢复的消息")]
+    conv = Conversation(initial)
+
+    initial.append(Message(role="assistant", content="不应进入"))
+    assert conv.messages() == [Message(role="user", content="恢复的消息")]
+
+    conv.replace_messages([Message(role="assistant", content="摘要后的上下文")])
+    assert conv.messages() == [Message(role="assistant", content="摘要后的上下文")]
+
+
+def test_conversation_calls_append_sink_once_and_isolates_sink_errors() -> None:
+    captured: list[Message] = []
+    conv = Conversation(on_append=captured.append)
+
+    conv.add_user("你好")
+    conv.add_assistant("收到")
+
+    assert captured == conv.messages()
+
+    broken = Conversation(on_append=lambda message: (_ for _ in ()).throw(OSError()))
+    broken.add_user("归档失败也继续")
+    assert broken.messages()[0].content == "归档失败也继续"

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from mewcode import __version__
 from mewcode.conversation import Conversation
+from mewcode.context import ContextController
 from mewcode.llm import (
     Provider,
     Request,
@@ -72,6 +73,7 @@ class Event:
     iter: int = 0
     notice: str = ""
     done: bool = False
+    natural: bool = False
     err: Exception | None = None
     approval: ApprovalRequest | None = None
 
@@ -92,11 +94,15 @@ class Agent:
         registry: Registry,
         version: str = __version__,
         engine: Engine | None = None,
+        context: ContextController | None = None,
+        prompt_supplier: Callable[[], tuple[str, str]] | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
         self._version = version
         self._engine = engine if engine is not None else new_engine(Path.cwd())[0]
+        self._context = context
+        self._prompt_supplier = prompt_supplier
 
     async def run(
         self,
@@ -106,7 +112,10 @@ class Agent:
     ) -> AsyncIterator[Event]:
         cancel_event = cancel if cancel is not None else asyncio.Event()
         definitions = self._definitions_for_mode(mode)
-        stable_system = build_system_prompt()
+        instructions, memory = (
+            self._prompt_supplier() if self._prompt_supplier else ("", "")
+        )
+        stable_system = build_system_prompt(instructions, memory)
         environment = await asyncio.to_thread(
             gather_environment, self._version, self._provider.model
         )
@@ -121,10 +130,19 @@ class Agent:
             yield Event(iter=iteration)
 
             reminder = self._reminder_for(mode, iteration)
+            if self._context is not None:
+                for notice in await self._context.prepare_request(
+                    conv, stable_system, definitions
+                ):
+                    yield Event(notice=notice)
             request = Request(
                 messages=conv.messages(),
                 tools=definitions,
-                system=System(stable=stable_system, environment=environment_text),
+                system=System(
+                    stable=stable_system,
+                    environment=environment_text,
+                    context=self._context.system_context() if self._context else "",
+                ),
                 reminder=reminder,
             )
 
@@ -145,6 +163,13 @@ class Agent:
                 return
 
             if outcome.usage is not None:
+                if self._context is not None:
+                    self._context.record_usage(
+                        outcome.usage.input_tokens,
+                        self._context.request_chars(
+                            conv.messages(), stable_system, definitions
+                        ),
+                    )
                 yield Event(
                     usage=Usage(
                         input=outcome.usage.input_tokens,
@@ -159,7 +184,7 @@ class Agent:
                 if not outcome.text.strip():
                     yield Event(text=final_text)
                 conv.add_assistant(final_text)
-                yield Event(done=True)
+                yield Event(done=True, natural=True)
                 return
 
             conv.add_assistant_with_tool_calls(outcome.text, outcome.calls)

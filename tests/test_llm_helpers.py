@@ -31,6 +31,7 @@ from mewcode.llm.openai_provider import (
     to_openai_messages,
     to_openai_tools,
 )
+from mewcode.llm.generation import GenerationError, generate_text
 
 
 def _definition() -> ToolDefinition:
@@ -59,9 +60,7 @@ def test_text_delta_extractors_and_redaction() -> None:
     assert redact_secret("bad sk-secret key", "sk-secret") == "bad *** key"
 
 
-def test_openai_messages_use_two_system_blocks_and_keep_reminder_out_of_history() -> (
-    None
-):
+def test_openai_messages_use_system_blocks_and_keep_reminder_out_of_history() -> None:
     call = ToolCall("call-1", "read_file", '{"path":"a.py"}')
     request = Request(
         messages=[
@@ -73,19 +72,20 @@ def test_openai_messages_use_two_system_blocks_and_keep_reminder_out_of_history(
             ),
         ],
         tools=[_definition()],
-        system=System(stable="稳定提示", environment="环境信息"),
+        system=System(stable="稳定提示", environment="环境信息", context="隐式上下文"),
         reminder="<system-reminder>计划模式</system-reminder>",
     )
 
     converted = to_openai_messages(request)
 
     assert to_openai_tools(request.tools)[0]["function"]["name"] == "read_file"
-    assert converted[:2] == [
+    assert converted[:3] == [
         {"role": "system", "content": "稳定提示"},
         {"role": "system", "content": "环境信息"},
+        {"role": "system", "content": "隐式上下文"},
     ]
-    assert converted[3]["tool_calls"][0]["id"] == "call-1"
-    assert converted[4]["tool_call_id"] == "call-1"
+    assert converted[4]["tool_calls"][0]["id"] == "call-1"
+    assert converted[5]["tool_call_id"] == "call-1"
     assert converted[-1] == {
         "role": "user",
         "content": "<system-reminder>计划模式</system-reminder>",
@@ -222,7 +222,7 @@ def test_openai_provider_serializes_request_and_streams_usage() -> None:
     request = Request(
         messages=[Message(role="user", content="读取")],
         tools=[_definition()],
-        system=System(stable="稳定提示", environment="环境信息"),
+        system=System(stable="稳定提示", environment="环境信息", context="隐式上下文"),
     )
 
     async def collect():
@@ -230,9 +230,10 @@ def test_openai_provider_serializes_request_and_streams_usage() -> None:
 
     events = asyncio.run(collect())
 
-    assert captured["messages"][:2] == [
+    assert captured["messages"][:3] == [
         {"role": "system", "content": "稳定提示"},
         {"role": "system", "content": "环境信息"},
+        {"role": "system", "content": "隐式上下文"},
     ]
     assert captured["tools"] == to_openai_tools([_definition()])
     assert Usage(12, 7, cache_read=9) in [event.usage for event in events]
@@ -282,7 +283,7 @@ def test_anthropic_provider_uses_cache_block_and_reports_cache_usage() -> None:
     request = Request(
         messages=[Message(role="user", content="读取")],
         tools=[_definition()],
-        system=System(stable="稳定提示", environment="环境信息"),
+        system=System(stable="稳定提示", environment="环境信息", context="隐式上下文"),
         reminder="<system-reminder>计划模式</system-reminder>",
     )
 
@@ -300,3 +301,58 @@ def test_anthropic_provider_uses_cache_block_and_reports_cache_usage() -> None:
     assert Usage(11, 6, cache_write=20, cache_read=30) in [
         event.usage for event in events
     ]
+
+
+def test_anthropic_system_keeps_context_after_environment() -> None:
+    request = Request(
+        system=System(stable="稳定提示", environment="环境信息", context="隐式上下文")
+    )
+
+    assert to_anthropic_system(request) == [
+        {
+            "type": "text",
+            "text": "稳定提示",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": "环境信息"},
+        {"type": "text", "text": "隐式上下文"},
+    ]
+
+
+def test_generate_text_collects_text_and_rejects_tools() -> None:
+    class ProviderStub:
+        def redact(self, text: str) -> str:
+            return text
+
+        def stream(self, request: Request):
+            assert request.tools == []
+            assert request.messages[0].content == "生成标题"
+
+            async def events():
+                yield SimpleNamespace(text="会话", tool_calls=[], err=None)
+                yield SimpleNamespace(text="标题", tool_calls=[], err=None)
+
+            return events()
+
+    assert (
+        asyncio.run(
+            generate_text(ProviderStub(), system="系统", prompt="生成标题")  # type: ignore[arg-type]
+        )
+        == "会话标题"
+    )
+
+    class ToolProvider(ProviderStub):
+        def stream(self, request: Request):
+            async def events():
+                yield SimpleNamespace(
+                    text="", tool_calls=[ToolCall("x", "t", "{}")], err=None
+                )
+
+            return events()
+
+    try:
+        asyncio.run(generate_text(ToolProvider(), system="系统", prompt="x"))  # type: ignore[arg-type]
+    except GenerationError as exc:
+        assert "不允许工具调用" in str(exc)
+    else:
+        raise AssertionError("工具调用必须使后台生成失败")

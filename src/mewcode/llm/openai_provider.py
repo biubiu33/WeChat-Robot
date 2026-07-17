@@ -105,6 +105,8 @@ def to_openai_messages(req: Request) -> list[dict[str, Any]]:
         messages.append({"role": "system", "content": req.system.stable})
     if req.system.environment:
         messages.append({"role": "system", "content": req.system.environment})
+    if req.system.context:
+        messages.append({"role": "system", "content": req.system.context})
 
     for message in req.messages:
         if message.role == "assistant" and message.tool_calls:

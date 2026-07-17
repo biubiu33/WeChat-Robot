@@ -60,6 +60,14 @@ def test_assemble_system_skips_empty_slots_and_is_deterministic() -> None:
     assert all(not module.content for module in optional_modules())
 
 
+def test_build_system_prompt_injects_instructions_and_memory() -> None:
+    prompt = build_system_prompt("项目规则", "长期偏好")
+
+    assert "## 自定义指令\n项目规则" in prompt
+    assert "## 长期记忆\n长期偏好" in prompt
+    assert prompt.index("项目规则") < prompt.index("长期偏好")
+
+
 def test_environment_is_dynamic_and_degrades_without_git(tmp_path) -> None:
     environment = gather_environment(
         "0.1.0",

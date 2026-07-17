@@ -53,3 +53,6 @@ desktop.ini
 # Codex/local agent metadata
 .agents/
 .codex/
+.mewcode/sessions/
+.mewcode/cache/
+.mewcode/memory/

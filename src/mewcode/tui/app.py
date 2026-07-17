@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from datetime import datetime, timedelta
 from enum import Enum
+from pathlib import Path
 
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.containers import Container
 from textual.timer import Timer
 from textual.widget import Widget
@@ -18,8 +21,11 @@ from mewcode import __version__
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
 from mewcode.llm import Provider, new_provider
+from mewcode.memory import InstructionBundle, MemoryManager
 from mewcode.permission import Engine, Mode, Outcome, new_engine
 from mewcode.prompt import render_banner
+from mewcode.session.repository import SessionRepository
+from mewcode.session.runtime import SessionRuntime
 from mewcode.tool import Registry, new_default_registry
 
 from .timeline import Timeline, ToolRun
@@ -37,6 +43,8 @@ class SessionState(Enum):
     IDLE = "idle"
     STREAMING = "streaming"
     APPROVING = "approving"
+    COMPACTING = "compacting"
+    RESUMING = "resuming"
 
 
 class PromptInput(TextArea):
@@ -164,15 +172,35 @@ class MewCodeApp(App):
         version: str = __version__,
         registry: Registry | None = None,
         engine: Engine | None = None,
+        root: Path | None = None,
+        instructions: InstructionBundle | None = None,
+        memory_manager: MemoryManager | None = None,
+        session_repository: SessionRepository | None = None,
     ) -> None:
         super().__init__()
         self.providers = providers
         self.version = version
         self.registry = registry if registry is not None else new_default_registry()
         self.engine = engine if engine is not None else new_engine(os.getcwd())[0]
+        self.root = (Path.cwd() if root is None else root).resolve()
+        self.instructions = (
+            instructions if instructions is not None else InstructionBundle("")
+        )
+        self.memory_manager = (
+            memory_manager if memory_manager is not None else MemoryManager(self.root)
+        )
+        self.memory_enabled = memory_manager is not None
+        self.session_repository = (
+            session_repository
+            if session_repository is not None
+            else SessionRepository(self.root)
+        )
+        self.session_enabled = session_repository is not None
         self.state = SessionState.SELECTING if len(providers) > 1 else SessionState.IDLE
         self.provider: Provider | None = None
+        self.provider_config: ProviderConfig | None = None
         self.conv = Conversation()
+        self.runtime: SessionRuntime | None = None
         self.mode = self.engine.default_mode
         self.iter = 0
         self.usage_in = 0
@@ -210,7 +238,7 @@ class MewCodeApp(App):
         )
 
         if len(self.providers) == 1:
-            self.provider = new_provider(self.providers[0])
+            self.activate_provider(self.providers[0])
             self.query_one("#selector").display = False
             self.refresh_status()
             self.query_one("#input").focus()
@@ -224,6 +252,8 @@ class MewCodeApp(App):
     async def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
     ) -> None:
+        if event.option_list.id != "provider-list":
+            return
         from .select import select_provider
 
         select_provider(self, event.option_index, SessionState.IDLE)
@@ -239,6 +269,16 @@ class MewCodeApp(App):
 
         if text == "/exit":
             await self.action_quit()
+            return
+
+        if text == "/resume":
+            await self.action_resume()
+            text_area.text = ""
+            return
+
+        if text == "/compact":
+            text_area.text = ""
+            await self.action_compact()
             return
 
         if text == "/plan":
@@ -258,6 +298,7 @@ class MewCodeApp(App):
             self.mode = Mode.DEFAULT
             text = EXECUTE_DIRECTIVE
 
+        self._ensure_runtime()
         self.conv.add_user(text)
         await self.append_timeline(user_entry(text))
         text_area.text = ""
@@ -275,12 +316,184 @@ class MewCodeApp(App):
         self._timer = self.set_interval(0.1, lambda: tick(self, SessionState.STREAMING))
         self._stream_task = asyncio.create_task(consume_stream(self))
 
+    def activate_provider(self, cfg: ProviderConfig) -> None:
+        self.provider = new_provider(cfg)
+        self.provider_config = cfg
+        if self.runtime is not None:
+            self.runtime.close()
+        self.runtime = None
+        self.conv = Conversation()
+
+    def _ensure_runtime(self) -> None:
+        if self.runtime is not None:
+            return
+        if self.provider is None or self.provider_config is None:
+            raise RuntimeError("尚未选择 Provider")
+        self.runtime = SessionRuntime.new(
+            self.root,
+            self.provider,
+            self.provider_config.context_window,
+            enable_title=self.session_enabled,
+        )
+        self.conv = self.runtime.conversation
+
+    async def action_compact(self) -> None:
+        if self.state is not SessionState.IDLE:
+            return
+        if self.runtime is None:
+            await self.append_timeline(notice_entry("当前没有可压缩的会话"))
+            return
+        self.state = SessionState.COMPACTING
+        self.refresh_status()
+        stable = self._stable_prompt()
+        result = await self.runtime.context.compact_now(
+            self.conv, stable, self.registry.definitions()
+        )
+        await self.append_timeline(notice_entry(result))
+        self.runtime.writer.append_visible("notice", result)
+        self.state = SessionState.IDLE
+        self.refresh_status()
+
+    async def action_resume(self) -> None:
+        if self.state is not SessionState.IDLE:
+            await self.append_timeline(notice_entry("请等待当前任务完成"))
+            return
+        self.session_repository.cleanup_expired()
+        sessions = self.session_repository.list_sessions()
+        if not sessions:
+            await self.append_timeline(notice_entry("没有可恢复的会话"))
+            return
+        self.state = SessionState.RESUMING
+        from .resume import ResumeScreen
+
+        self.push_screen(
+            ResumeScreen(sessions, self._delete_session), self._resume_selected
+        )
+
+    def _delete_session(self, summary: object) -> bool:
+        session_id = getattr(summary, "session_id", "")
+        is_current = (
+            self.runtime is not None and self.runtime.paths.session_id == session_id
+        )
+        if not is_current:
+            return self.session_repository.delete(session_id)
+
+        # Windows 不允许删除仍由 Writer 打开的 JSONL；先关闭，失败时立即恢复。
+        self.runtime.close()
+        deleted = self.session_repository.delete(session_id)
+        if deleted:
+            self.runtime = None
+            self.conv = Conversation()
+            return True
+        if self.provider is not None and self.provider_config is not None:
+            archive = self.session_repository.restore(session_id)
+            self.runtime = SessionRuntime.restore(
+                self.root,
+                session_id,
+                self.provider,
+                self.provider_config.context_window,
+                archive,
+                stale=False,
+                enable_title=self.session_enabled,
+            )
+            self.conv = self.runtime.conversation
+        return False
+
+    def _resume_selected(self, summary: object) -> None:
+        asyncio.create_task(self._finish_resume(summary))
+
+    async def _finish_resume(self, summary: object) -> None:
+        try:
+            if summary is None or self.provider is None or self.provider_config is None:
+                return
+            session_id = getattr(summary, "session_id", "")
+            archive = self.session_repository.restore(session_id)
+            stale = (
+                archive.last_active is not None
+                and datetime.now() - archive.last_active > timedelta(days=7)
+            )
+            if self.runtime is not None:
+                self.runtime.close()
+            self.runtime = SessionRuntime.restore(
+                self.root,
+                session_id,
+                self.provider,
+                self.provider_config.context_window,
+                archive,
+                stale=stale,
+                enable_title=self.session_enabled,
+            )
+            self.conv = self.runtime.conversation
+            await self._replay(archive.visible_events)
+            await self.append_timeline(
+                notice_entry(
+                    f"已恢复会话 {session_id}，共 {len(archive.messages)} 条消息"
+                )
+            )
+        finally:
+            self.state = SessionState.IDLE
+            self.refresh_status()
+
+    async def _replay(self, events: list[object]) -> None:
+        timeline = self.query_one("#timeline", Timeline)
+        await timeline.remove_children()
+        calls: dict[str, ToolRun] = {}
+        for event in events:
+            event_type = getattr(event, "type", "")
+            data = getattr(event, "data", {})
+            if event_type == "message" and isinstance(data, dict):
+                role = data.get("role")
+                if role == "user":
+                    await timeline.append(user_entry(str(data.get("content", ""))))
+                elif role == "assistant":
+                    content = str(data.get("content", ""))
+                    if content:
+                        from .view import assistant_entry
+
+                        await timeline.append(assistant_entry(content, 0))
+                    for call in data.get("tool_calls", []):
+                        if isinstance(call, dict):
+                            calls[str(call.get("id", ""))] = ToolRun(
+                                str(call.get("name", "tool")),
+                                str(call.get("input", "{}")),
+                            )
+                elif role == "tool":
+                    for result in data.get("tool_results", []):
+                        if isinstance(result, dict):
+                            from .view import tool_result_entry
+
+                            run = calls.get(
+                                str(result.get("tool_call_id", "")),
+                                ToolRun("tool", "{}"),
+                            )
+                            await timeline.append(
+                                tool_result_entry(
+                                    run.name,
+                                    run.args,
+                                    str(result.get("content", "")),
+                                    bool(result.get("is_error", False)),
+                                )
+                            )
+            elif event_type == "notice" and isinstance(data, dict):
+                await timeline.append(notice_entry(str(data.get("text", ""))))
+            elif event_type == "error" and isinstance(data, dict):
+                await timeline.append(notice_entry(f"错误: {data.get('text', '')}"))
+
+    def _stable_prompt(self) -> str:
+        from mewcode.prompt import build_system_prompt
+
+        return build_system_prompt(
+            self.instructions.content, self.memory_manager.prompt_index()
+        )
+
     async def append_timeline(self, entry: Widget) -> None:
         await self.query_one("#timeline", Timeline).append(entry)
 
     async def action_quit(self) -> None:
         if self._stream_task is not None:
             self._stream_task.cancel()
+        if self.runtime is not None:
+            self.runtime.close()
         self.exit()
 
     def action_cancel_or_quit(self) -> None:
@@ -350,14 +563,17 @@ class MewCodeApp(App):
     def refresh_status(self) -> None:
         if self.provider is None:
             return
-        self.query_one("#statusbar", Static).update(
-            status_bar(
-                self.provider.model,
-                self.mode,
-                self.usage_in,
-                self.usage_out,
+        try:
+            self.query_one("#statusbar", Static).update(
+                status_bar(
+                    self.provider.model,
+                    self.mode,
+                    self.usage_in,
+                    self.usage_out,
+                )
             )
-        )
+        except NoMatches:
+            return
 
     def watch_state(self, state: SessionState) -> None:
         try:
