@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from .archive import (
     ArchiveEvent,
     ArtifactRef,
     CompactCheckpoint,
+    SessionStats,
     message_from_data,
     read_events,
 )
@@ -37,6 +38,7 @@ class RestoredArchive:
     artifact_refs: list[ArtifactRef]
     failed_compactions: int
     last_active: datetime | None
+    stats: SessionStats = field(default_factory=SessionStats)
 
 
 class SessionRepository:
@@ -73,6 +75,8 @@ class SessionRepository:
         checkpoint: CompactCheckpoint | None = None
         refs: list[ArtifactRef] = []
         failures = 0
+        input_tokens = 0
+        output_tokens = 0
         for event in events:
             if event.type == "tool_archive":
                 ref = _artifact_ref(event)
@@ -87,6 +91,11 @@ class SessionRepository:
                 count = event.data.get("failures")
                 if isinstance(count, int) and count >= 0:
                     failures = count
+            elif event.type == "usage":
+                usage = _usage(event)
+                if usage is not None:
+                    input_tokens += usage[0]
+                    output_tokens += usage[1]
         last_active = _last_active(events)
         return RestoredArchive(
             visible_events,
@@ -95,6 +104,11 @@ class SessionRepository:
             refs,
             failures,
             last_active,
+            SessionStats(
+                input_tokens,
+                output_tokens,
+                sum(message.role == "user" for message in complete_messages),
+            ),
         )
 
     def paths_for(self, session_id: str) -> SessionPaths:
@@ -246,6 +260,21 @@ def _checkpoint(event: ArchiveEvent) -> CompactCheckpoint | None:
     ):
         return None
     return CompactCheckpoint(summary, compacted_through, retained_from)
+
+
+def _usage(event: ArchiveEvent) -> tuple[int, int] | None:
+    input_tokens = event.data.get("input_tokens")
+    output_tokens = event.data.get("output_tokens")
+    if (
+        isinstance(input_tokens, bool)
+        or isinstance(output_tokens, bool)
+        or not isinstance(input_tokens, int)
+        or not isinstance(output_tokens, int)
+        or input_tokens < 0
+        or output_tokens < 0
+    ):
+        return None
+    return input_tokens, output_tokens
 
 
 def _last_active(events: list[ArchiveEvent]) -> datetime | None:

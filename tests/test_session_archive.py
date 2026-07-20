@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from mewcode.llm import Message, ToolCall, ToolResult
 from mewcode.session.archive import (
     ArchiveWriter,
@@ -50,6 +52,7 @@ def test_writer_serializes_messages_metadata_and_context_events(tmp_path: Path) 
     writer.append_tool_archive(ArtifactRef(2, 0, "cache/out.txt", "print", 12))
     writer.append_compact(CompactCheckpoint("正式摘要", 2, 2))
     writer.append_compact_failure(1)
+    writer.append_usage(12, 3)
     writer.append_visible("notice", "已压缩上下文")
     writer.close()
     writer.close()
@@ -63,6 +66,7 @@ def test_writer_serializes_messages_metadata_and_context_events(tmp_path: Path) 
         "tool_archive",
         "compact",
         "compact_failure",
+        "usage",
         "notice",
     ]
     assert events[0].data["model"] == "demo-model"
@@ -71,6 +75,17 @@ def test_writer_serializes_messages_metadata_and_context_events(tmp_path: Path) 
     assert restored is not None
     assert restored.tool_calls[0].name == "read_file"
     assert events[5].data["summary"] == "正式摘要"
+    assert events[7].data == {"input_tokens": 12, "output_tokens": 3}
+
+
+def test_writer_rejects_invalid_usage_values(tmp_path: Path) -> None:
+    writer = ArchiveWriter(tmp_path / "session.jsonl")
+
+    with pytest.raises(ValueError, match="非负整数"):
+        writer.append_usage(-1, 0)
+    with pytest.raises(ValueError, match="非负整数"):
+        writer.append_usage(True, 0)
+    writer.close()
 
 
 def test_reader_skips_broken_tail_line(tmp_path: Path) -> None:

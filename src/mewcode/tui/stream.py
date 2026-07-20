@@ -64,9 +64,7 @@ async def consume_stream(app: MewCodeApp) -> None:
                         event.tool.is_error,
                     )
             if event.usage is not None:
-                app.usage_in += event.usage.input
-                app.usage_out += event.usage.output
-                app.refresh_status()
+                app.record_usage(event.usage.input, event.usage.output)
             if event.notice:
                 await app.append_timeline(notice_entry(event.notice))
                 if app.runtime is not None:

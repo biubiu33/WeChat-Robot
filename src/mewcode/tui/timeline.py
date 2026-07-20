@@ -28,6 +28,10 @@ class Timeline(VerticalScroll):
             await self.wait_for_refresh()
             self._follow_tail()
 
+    async def clear(self) -> None:
+        await self.remove_children()
+        self.scroll_to(y=0, animate=False, force=True, immediate=True)
+
     def _follow_tail(self) -> None:
         self.scroll_to(
             y=self.max_scroll_y,

@@ -15,7 +15,14 @@ from mewcode.llm import Message, ToolCall, ToolResult
 
 
 EventType = Literal[
-    "message", "notice", "error", "title", "tool_archive", "compact", "compact_failure"
+    "message",
+    "notice",
+    "error",
+    "title",
+    "tool_archive",
+    "compact",
+    "compact_failure",
+    "usage",
 ]
 
 
@@ -42,6 +49,13 @@ class CompactCheckpoint:
     retained_from: int
 
 
+@dataclass
+class SessionStats:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    turns: int = 0
+
+
 def event_to_dict(event: ArchiveEvent) -> dict[str, object]:
     return {"type": event.type, "ts": event.ts, **event.data}
 
@@ -59,6 +73,7 @@ def event_from_dict(raw: object) -> ArchiveEvent | None:
         "tool_archive",
         "compact",
         "compact_failure",
+        "usage",
     } or not isinstance(timestamp, int):
         return None
     data = {key: value for key, value in raw.items() if key not in {"type", "ts"}}
@@ -186,6 +201,27 @@ class ArchiveWriter:
     def append_visible(self, event_type: Literal["notice", "error"], text: str) -> None:
         self.append(ArchiveEvent(event_type, _now(), {"text": text}))
 
+    def append_usage(self, input_tokens: int, output_tokens: int) -> None:
+        if (
+            isinstance(input_tokens, bool)
+            or isinstance(output_tokens, bool)
+            or not isinstance(input_tokens, int)
+            or not isinstance(output_tokens, int)
+            or input_tokens < 0
+            or output_tokens < 0
+        ):
+            raise ValueError("Token usage 必须是非负整数")
+        self.append(
+            ArchiveEvent(
+                "usage",
+                _now(),
+                {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            )
+        )
+
     def append(self, event: ArchiveEvent) -> None:
         line = json.dumps(
             event_to_dict(event), ensure_ascii=False, separators=(",", ":")
@@ -271,6 +307,7 @@ __all__ = [
     "ArchiveWriter",
     "ArtifactRef",
     "CompactCheckpoint",
+    "SessionStats",
     "event_from_dict",
     "event_to_dict",
     "message_from_data",

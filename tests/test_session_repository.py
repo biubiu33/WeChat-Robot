@@ -5,7 +5,7 @@ from pathlib import Path
 
 import mewcode.session.archive as archive
 from mewcode.llm import Message, ToolCall
-from mewcode.session.archive import ArchiveWriter, CompactCheckpoint
+from mewcode.session.archive import ArchiveEvent, ArchiveWriter, CompactCheckpoint
 from mewcode.session.paths import paths_for
 from mewcode.session.repository import SessionRepository
 
@@ -59,6 +59,28 @@ def test_restore_skips_bad_rows_keeps_visible_history_and_truncates_tool_tail(
     assert restored.messages == [Message(role="user", content="完整用户消息")]
     assert [event.type for event in restored.visible_events] == ["message"]
     assert restored.latest_checkpoint == CompactCheckpoint("正式摘要", 1, 1)
+    assert restored.stats.turns == 1
+
+
+def test_restore_sums_usage_and_counts_user_messages(tmp_path: Path) -> None:
+    session_id = "20260717-120000-a1b2"
+    path = paths_for(tmp_path, session_id).archive_path
+    writer = ArchiveWriter(path)
+    writer.append_message(Message(role="user", content="第一轮"), model="demo")
+    writer.append_message(Message(role="assistant", content="完成"))
+    writer.append_usage(10, 3)
+    writer.append_message(Message(role="user", content="第二轮"))
+    writer.append_message(Message(role="assistant", content="完成"))
+    writer.append_usage(20, 7)
+    writer.append(ArchiveEvent("usage", 1, {"input_tokens": -1, "output_tokens": 9}))
+    writer.append(ArchiveEvent("usage", 1, {"input_tokens": True, "output_tokens": 9}))
+    writer.close()
+
+    restored = SessionRepository(tmp_path).restore(session_id)
+
+    assert restored.stats.input_tokens == 30
+    assert restored.stats.output_tokens == 10
+    assert restored.stats.turns == 2
 
 
 def test_cleanup_removes_only_expired_new_format_sessions_and_cache(

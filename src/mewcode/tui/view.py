@@ -46,6 +46,10 @@ def system_entry(text: str) -> Static:
     return Static(Text(text, style="dim"), classes="timeline-entry system-entry")
 
 
+def command_output_entry(text: str) -> Static:
+    return Static(Text(text), classes="timeline-entry command-output-entry")
+
+
 def streaming_block(reply: str, elapsed_seconds: int, iteration: int = 0) -> Group:
     body = reply or "等待模型响应..."
     detail = f"生成中...（{elapsed_seconds}s"
@@ -134,7 +138,7 @@ def status_bar(
     table.add_column(justify="left")
     table.add_column(justify="right")
     usage = f"↑{_compact_tokens(usage_in)} ↓{_compact_tokens(usage_out)} tok"
-    table.add_row(f"权限: {_mode_label(mode)}", f"Model: {model}  {usage}")
+    table.add_row(f"权限: [{_mode_label(mode)}]", f"Model: {model}  {usage}")
     return table
 
 

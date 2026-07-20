@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from mewcode import __version__
+from mewcode.command import new_default_command_registry
 from mewcode.config import ConfigError, discover_config_path, load
 from mewcode.mcp import load_config as load_mcp_config
 from mewcode.mcp import new_manager
@@ -16,6 +17,7 @@ from mewcode.tool import new_default_registry
 
 
 async def _run_app(providers: object, root: Path) -> None:
+    command_registry = new_default_command_registry()
     registry = new_default_registry()
     manager = await new_manager(load_mcp_config(), version=__version__)
     try:
@@ -40,6 +42,7 @@ async def _run_app(providers: object, root: Path) -> None:
             providers,
             version=__version__,
             registry=registry,
+            command_registry=command_registry,
             engine=engine,
             root=root,
             instructions=instructions,

@@ -18,16 +18,25 @@ from textual.widgets import OptionList, Static, TextArea
 
 from mewcode.agent import ApprovalRequest
 from mewcode import __version__
+from mewcode.command import (
+    CommandDispatcher,
+    CommandRegistry,
+    InputKind,
+    new_default_command_registry,
+    parse_input,
+)
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
 from mewcode.llm import Provider, new_provider
 from mewcode.memory import InstructionBundle, MemoryManager
 from mewcode.permission import Engine, Mode, Outcome, new_engine
 from mewcode.prompt import render_banner
+from mewcode.session import SessionStats
 from mewcode.session.repository import SessionRepository
 from mewcode.session.runtime import SessionRuntime
 from mewcode.tool import Registry, new_default_registry
 
+from .completion import CommandCompletionMenu
 from .timeline import Timeline, ToolRun
 from .view import (
     notice_entry,
@@ -49,13 +58,35 @@ class SessionState(Enum):
 
 class PromptInput(TextArea):
     def on_key(self, event: events.Key) -> None:
+        app = self.app
         if event.key == "shift+tab":
-            app = self.app
             if hasattr(app, "action_cycle_permission_mode"):
                 asyncio.create_task(app.action_cycle_permission_mode())
             event.prevent_default()
             event.stop()
             return
+
+        if event.key == "tab":
+            app = self.app
+            if hasattr(app, "complete_current_input"):
+                app.complete_current_input()
+            event.prevent_default()
+            event.stop()
+            return
+
+        if event.key in {"up", "down"} and hasattr(app, "command_menu_visible"):
+            if app.command_menu_visible():
+                app.move_command_menu(-1 if event.key == "up" else 1)
+                event.prevent_default()
+                event.stop()
+                return
+
+        if event.key == "escape" and hasattr(app, "command_menu_visible"):
+            if app.command_menu_visible():
+                app.dismiss_command_menu()
+                event.prevent_default()
+                event.stop()
+                return
 
         if event.key in {"alt+enter", "meta+enter"}:
             self.insert("\n")
@@ -63,7 +94,17 @@ class PromptInput(TextArea):
             return
 
         if event.key == "enter":
-            app = self.app
+            if (
+                hasattr(app, "refresh_command_menu")
+                and hasattr(app, "command_menu_visible")
+                and not app.command_menu_visible()
+            ):
+                app.refresh_command_menu()
+            if hasattr(app, "command_menu_visible") and app.command_menu_visible():
+                app.accept_command_completion()
+                event.prevent_default()
+                event.stop()
+                return
             if hasattr(app, "submit_current_input"):
                 asyncio.create_task(app.submit_current_input())
             event.prevent_default()
@@ -105,6 +146,16 @@ class MewCodeApp(App):
         margin: 0 1;
         border: round $primary;
         padding: 0 1;
+    }
+
+    #command-completion-menu {
+        height: auto;
+        max-height: 12;
+        margin: 0 1;
+        border: round $secondary;
+        background: $surface;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
     }
 
     #statusbar {
@@ -158,6 +209,10 @@ class MewCodeApp(App):
     .system-entry {
         border-left: heavy $secondary;
     }
+
+    .command-output-entry {
+        border-left: heavy $secondary;
+    }
     """
 
     BINDINGS = [
@@ -171,6 +226,7 @@ class MewCodeApp(App):
         providers: list[ProviderConfig],
         version: str = __version__,
         registry: Registry | None = None,
+        command_registry: CommandRegistry | None = None,
         engine: Engine | None = None,
         root: Path | None = None,
         instructions: InstructionBundle | None = None,
@@ -181,6 +237,12 @@ class MewCodeApp(App):
         self.providers = providers
         self.version = version
         self.registry = registry if registry is not None else new_default_registry()
+        self.command_registry = (
+            command_registry
+            if command_registry is not None
+            else new_default_command_registry()
+        )
+        self.command_dispatcher = CommandDispatcher(self.command_registry)
         self.engine = engine if engine is not None else new_engine(os.getcwd())[0]
         self.root = (Path.cwd() if root is None else root).resolve()
         self.instructions = (
@@ -203,8 +265,7 @@ class MewCodeApp(App):
         self.runtime: SessionRuntime | None = None
         self.mode = self.engine.default_mode
         self.iter = 0
-        self.usage_in = 0
-        self.usage_out = 0
+        self.session_stats = SessionStats()
         self.cur_reply = ""
         self.cur_tools: list[ToolRun] = []
         self.turn_start = 0.0
@@ -213,6 +274,10 @@ class MewCodeApp(App):
         self.turn_cancel: asyncio.Event | None = None
         self.pending: ApprovalRequest | None = None
         self.approve_cursor = 0
+        self._completion_suppressed_text: str | None = None
+        from .command import TuiCommandControl
+
+        self.command_control = TuiCommandControl(self)
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -228,6 +293,7 @@ class MewCodeApp(App):
             Timeline(id="timeline"),
             Static("", id="streaming"),
             PromptInput(placeholder="输入消息...", id="input"),
+            CommandCompletionMenu(id="command-completion-menu"),
             Static("", id="statusbar"),
             id="main",
         )
@@ -252,55 +318,111 @@ class MewCodeApp(App):
     async def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
     ) -> None:
+        if event.option_list.id == "command-completion-menu":
+            event.stop()
+            self.accept_command_completion(event.option_index)
+            return
         if event.option_list.id != "provider-list":
             return
         from .select import select_provider
 
         select_provider(self, event.option_index, SessionState.IDLE)
 
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id == "input":
+            self.refresh_command_menu()
+
     async def submit_current_input(self) -> None:
         if self.state is not SessionState.IDLE:
             return
 
         text_area = self.query_one("#input", TextArea)
-        text = text_area.text.strip()
-        if not text:
+        parsed = parse_input(text_area.text)
+        if parsed.kind is InputKind.EMPTY:
             return
-
-        if text == "/exit":
-            await self.action_quit()
-            return
-
-        if text == "/resume":
-            await self.action_resume()
+        if parsed.kind is InputKind.COMMAND:
             text_area.text = ""
+            await self.command_dispatcher.dispatch(parsed, self.command_control)
+            if self.state is SessionState.IDLE:
+                text_area.focus()
+            return
+        await self.start_user_turn(parsed.text)
+
+    def complete_current_input(self) -> None:
+        if not self.command_menu_visible():
+            self.refresh_command_menu()
+        if self.command_menu_visible():
+            self.accept_command_completion()
+
+    def refresh_command_menu(self) -> None:
+        text_area = self.query_one("#input", TextArea)
+        menu = self.query_one("#command-completion-menu", CommandCompletionMenu)
+        text = text_area.text
+
+        if self._completion_suppressed_text is not None:
+            if text == self._completion_suppressed_text:
+                menu.set_commands(())
+                return
+            self._completion_suppressed_text = None
+
+        if (
+            self.state is not SessionState.IDLE
+            or not text.startswith("/")
+            or any(character.isspace() for character in text[1:])
+        ):
+            menu.set_commands(())
             return
 
-        if text == "/compact":
-            text_area.text = ""
-            await self.action_compact()
-            return
+        menu.set_commands(self.command_registry.completions(text[1:]))
 
-        if text == "/plan":
-            self.mode = Mode.PLAN
-            await self.append_timeline(notice_entry("已进入计划模式（只允许只读工具）"))
-            text_area.text = ""
-            self.refresh_status()
-            text_area.focus()
-            return
+    def command_menu_visible(self) -> bool:
+        menu = self.query_one("#command-completion-menu", CommandCompletionMenu)
+        return bool(menu.display and menu.commands)
 
+    def move_command_menu(self, delta: int) -> None:
+        menu = self.query_one("#command-completion-menu", CommandCompletionMenu)
+        menu.move_highlight(delta)
+
+    def dismiss_command_menu(self) -> None:
+        text_area = self.query_one("#input", TextArea)
+        self._completion_suppressed_text = text_area.text
+        self.query_one("#command-completion-menu", CommandCompletionMenu).set_commands(
+            ()
+        )
+        text_area.focus()
+
+    def accept_command_completion(self, option_index: int | None = None) -> None:
+        menu = self.query_one("#command-completion-menu", CommandCompletionMenu)
+        command_name = (
+            menu.highlighted_name()
+            if option_index is None
+            else menu.command_name_at(option_index)
+        )
+        if command_name is None:
+            return
+        self._apply_completion(command_name)
+
+    def _apply_completion(self, command_name: str) -> None:
+        text_area = self.query_one("#input", TextArea)
+        completed_text = f"/{command_name}"
+        self._completion_suppressed_text = completed_text
+        self.query_one("#command-completion-menu", CommandCompletionMenu).set_commands(
+            ()
+        )
+        text_area.text = completed_text
+        text_area.cursor_location = (0, len(completed_text))
+        text_area.focus()
+
+    async def start_user_turn(self, text: str) -> None:
+        if self.state is not SessionState.IDLE:
+            return
         if self.provider is None:
             return
-
-        if text == "/do":
-            from mewcode.prompt import EXECUTE_DIRECTIVE
-
-            self.mode = Mode.DEFAULT
-            text = EXECUTE_DIRECTIVE
-
         self._ensure_runtime()
         self.conv.add_user(text)
+        self.session_stats.turns += 1
         await self.append_timeline(user_entry(text))
+        text_area = self.query_one("#input", TextArea)
         text_area.text = ""
         text_area.read_only = True
         self.cur_reply = ""
@@ -323,6 +445,7 @@ class MewCodeApp(App):
             self.runtime.close()
         self.runtime = None
         self.conv = Conversation()
+        self.session_stats = SessionStats()
 
     def _ensure_runtime(self) -> None:
         if self.runtime is not None:
@@ -336,6 +459,21 @@ class MewCodeApp(App):
             enable_title=self.session_enabled,
         )
         self.conv = self.runtime.conversation
+
+    @property
+    def usage_in(self) -> int:
+        return self.session_stats.input_tokens
+
+    @property
+    def usage_out(self) -> int:
+        return self.session_stats.output_tokens
+
+    def record_usage(self, input_tokens: int, output_tokens: int) -> None:
+        self.session_stats.input_tokens += input_tokens
+        self.session_stats.output_tokens += output_tokens
+        if self.runtime is not None:
+            self.runtime.writer.append_usage(input_tokens, output_tokens)
+        self.refresh_status()
 
     async def action_compact(self) -> None:
         if self.state is not SessionState.IDLE:
@@ -384,6 +522,7 @@ class MewCodeApp(App):
         if deleted:
             self.runtime = None
             self.conv = Conversation()
+            self.session_stats = SessionStats()
             return True
         if self.provider is not None and self.provider_config is not None:
             archive = self.session_repository.restore(session_id)
@@ -397,6 +536,7 @@ class MewCodeApp(App):
                 enable_title=self.session_enabled,
             )
             self.conv = self.runtime.conversation
+            self.session_stats = archive.stats
         return False
 
     def _resume_selected(self, summary: object) -> None:
@@ -424,6 +564,7 @@ class MewCodeApp(App):
                 enable_title=self.session_enabled,
             )
             self.conv = self.runtime.conversation
+            self.session_stats = archive.stats
             await self._replay(archive.visible_events)
             await self.append_timeline(
                 notice_entry(
@@ -436,7 +577,7 @@ class MewCodeApp(App):
 
     async def _replay(self, events: list[object]) -> None:
         timeline = self.query_one("#timeline", Timeline)
-        await timeline.remove_children()
+        await timeline.clear()
         calls: dict[str, ToolRun] = {}
         for event in events:
             event_type = getattr(event, "type", "")

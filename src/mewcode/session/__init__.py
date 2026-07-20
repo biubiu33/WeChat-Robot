@@ -1,4 +1,10 @@
-from .archive import ArchiveEvent, ArchiveWriter, ArtifactRef, CompactCheckpoint
+from .archive import (
+    ArchiveEvent,
+    ArchiveWriter,
+    ArtifactRef,
+    CompactCheckpoint,
+    SessionStats,
+)
 from .paths import SessionPaths, create_session, ensure_project_layout, new_session_id
 from .repository import RestoredArchive, SessionRepository, SessionSummary
 
@@ -7,6 +13,7 @@ __all__ = [
     "ArchiveWriter",
     "ArtifactRef",
     "CompactCheckpoint",
+    "SessionStats",
     "SessionPaths",
     "SessionRepository",
     "SessionSummary",

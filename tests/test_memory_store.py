@@ -46,3 +46,38 @@ def test_store_truncates_large_injected_index(tmp_path: Path) -> None:
     (memory_dir / "MEMORY.md").write_text("x" * (MAX_INDEX_BYTES + 1), encoding="utf-8")
 
     assert store.prompt_index().endswith("(index truncated)\n")
+
+
+def test_store_lists_indexed_files_by_level_without_reading_notes(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    home = tmp_path / "home"
+    project_memory = project / ".mewcode" / "memory"
+    user_memory = home / ".mewcode" / "memory"
+    project_memory.mkdir(parents=True)
+    user_memory.mkdir(parents=True)
+    (project_memory / "MEMORY.md").write_text(
+        "- project B <!-- project_b.md -->\n"
+        "- project A <!-- project_a.md -->\n"
+        "- duplicate <!-- project_a.md -->\n"
+        "- unsafe <!-- ../secret.md -->\n"
+        "ordinary text secret-content\n",
+        encoding="utf-8",
+    )
+    (user_memory / "MEMORY.md").write_text(
+        "- user <!-- user_style.md -->\n",
+        encoding="utf-8",
+    )
+    store = MemoryStore(project, home)
+
+    assert store.indexed_files() == {
+        "project": ("project_a.md", "project_b.md"),
+        "user": ("user_style.md",),
+    }
+
+
+def test_store_lists_empty_index_levels(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "project", tmp_path / "home")
+
+    assert store.indexed_files() == {"project": (), "user": ()}

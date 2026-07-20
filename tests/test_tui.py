@@ -529,7 +529,7 @@ def test_status_bar_shows_plan_mode_and_compact_usage() -> None:
     Console(file=output, force_terminal=False).print(rendered)
 
     text = output.getvalue()
-    assert "权限: PLAN" in text
+    assert "权限: [PLAN]" in text
     assert "1.2k" in text
     assert "↑" in text and "↓" in text
 

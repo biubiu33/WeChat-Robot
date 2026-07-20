@@ -19,6 +19,7 @@ _TYPE_LEVEL: dict[str, str] = {
     "reference": "project",
 }
 _FILENAME_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*\.md$")
+_INDEX_FILENAME_RE = re.compile(r"<!--\s*([a-z0-9]+(?:_[a-z0-9]+)*\.md)\s*-->")
 MAX_INDEX_LINES = 200
 MAX_INDEX_BYTES = 25 * 1024
 
@@ -49,6 +50,22 @@ class MemoryStore:
 
     def index_exceeds_limit(self) -> bool:
         return any(_exceeds(self._read_index(level)) for level in ("project", "user"))
+
+    def indexed_files(self) -> dict[str, tuple[str, ...]]:
+        return {
+            level: tuple(
+                sorted(
+                    {
+                        match.group(1)
+                        for match in _INDEX_FILENAME_RE.finditer(
+                            self._read_index(level)
+                        )
+                        if match.group(1).lower() != "memory.md"
+                    }
+                )
+            )
+            for level in ("project", "user")
+        }
 
     async def apply(
         self, operations: list[NoteOperation], indexes: dict[str, str] | None = None

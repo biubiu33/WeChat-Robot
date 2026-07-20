@@ -22,6 +22,9 @@ class MemoryManager:
     def prompt_index(self) -> str:
         return self._store.prompt_index()
 
+    def indexed_files(self) -> dict[str, tuple[str, ...]]:
+        return self._store.indexed_files()
+
     async def update_after_turn(
         self, turn_messages: list[Message], provider: Provider
     ) -> None:
