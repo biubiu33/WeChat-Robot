@@ -31,70 +31,100 @@ class Manager:
         self._lock = asyncio.Lock()
         self._sessions: list[_Session] = []
         self._tools: list[McpTool] = []
-        self._stack = AsyncExitStack()
+        self._close_event = asyncio.Event()
+        self._connection_tasks: list[asyncio.Task[None]] = []
+        self._closing = False
 
     def tools(self) -> list[McpTool]:
         return list(self._tools)
 
     async def close(self) -> None:
+        async with self._lock:
+            self._closing = True
+            self._close_event.set()
+            tasks = list(self._connection_tasks)
+
         try:
-            await asyncio.wait_for(self._stack.aclose(), timeout=close_timeout)
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=close_timeout
+            )
         except asyncio.TimeoutError:
             _warn("close timeout, some sessions may leak")
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as exc:
             _warn(f"close failed: {type(exc).__name__}")
+        else:
+            for result in results:
+                if isinstance(result, Exception):
+                    _warn(f"close failed: {type(result).__name__}")
+        finally:
+            async with self._lock:
+                self._sessions.clear()
+                self._tools.clear()
+                self._connection_tasks.clear()
 
 
 async def new_manager(cfg: Config, version: str) -> Manager:
     manager = Manager()
-    tasks = [
-        asyncio.create_task(_connect_one(manager, name, config, version))
-        for name, config in cfg.servers.items()
+    ready = [asyncio.get_running_loop().create_future() for _ in cfg.servers]
+    manager._connection_tasks = [
+        asyncio.create_task(_connect_one(manager, name, config, version, signal))
+        for (name, config), signal in zip(cfg.servers.items(), ready, strict=True)
     ]
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    if ready:
+        await asyncio.gather(*ready, return_exceptions=True)
     manager._tools.sort(key=lambda tool: tool.full_name)
     return manager
 
 
 async def _connect_one(
-    manager: Manager, name: str, config: ServerConfig, version: str
+    manager: Manager,
+    name: str,
+    config: ServerConfig,
+    version: str,
+    ready: asyncio.Future[None],
 ) -> None:
     try:
-        await asyncio.wait_for(
-            _do_connect(manager, name, config, version), timeout=connect_timeout
-        )
+        async with AsyncExitStack() as stack:
+            async with asyncio.timeout(connect_timeout):
+                session, tools = await _do_connect(name, config, version, stack)
+
+            async with manager._lock:
+                if manager._closing:
+                    return
+                manager._sessions.append(_Session(name, session))
+                manager._tools.extend(tools)
+            ready.set_result(None)
+            await manager._close_event.wait()
     except asyncio.TimeoutError:
         _warn(f"connect server {name} timeout after {connect_timeout:g}s")
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         _warn(f"connect server {name} failed: {type(exc).__name__}")
+    finally:
+        if not ready.done():
+            ready.set_result(None)
 
 
 async def _do_connect(
-    manager: Manager, name: str, config: ServerConfig, version: str
-) -> None:
-    async with AsyncExitStack() as attempt_stack:
-        transport_context = await _transport(config, attempt_stack)
-        transport = await attempt_stack.enter_async_context(transport_context)
-        read_stream, write_stream = transport[0], transport[1]
-        session = await attempt_stack.enter_async_context(
-            ClientSession(
-                read_stream,
-                write_stream,
-                client_info=types.Implementation(name="mewcode", version=version),
-            )
+    name: str, config: ServerConfig, version: str, stack: AsyncExitStack
+) -> tuple[ClientSession, list[McpTool]]:
+    transport_context = await _transport(config, stack)
+    transport = await stack.enter_async_context(transport_context)
+    read_stream, write_stream = transport[0], transport[1]
+    session = await stack.enter_async_context(
+        ClientSession(
+            read_stream,
+            write_stream,
+            client_info=types.Implementation(name="mewcode", version=version),
         )
-        await session.initialize()
-        listed = await session.list_tools()
-        tools = _adapt_tools(name, listed.tools, session)
-        retained_stack = attempt_stack.pop_all()
-
-    async with manager._lock:
-        manager._stack.push_async_callback(retained_stack.aclose)
-        manager._sessions.append(_Session(name, session))
-        manager._tools.extend(tools)
+    )
+    await session.initialize()
+    listed = await session.list_tools()
+    return session, _adapt_tools(name, listed.tools, session)
 
 
 async def _transport(config: ServerConfig, stack: AsyncExitStack):

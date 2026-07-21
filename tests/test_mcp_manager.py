@@ -144,13 +144,13 @@ async def test_connection_timeout_is_isolated(monkeypatch: Any, capsys: Any) -> 
 
 @async_test
 async def test_close_timeout_does_not_block(monkeypatch: Any, capsys: Any) -> None:
-    class SlowStack:
-        async def aclose(self) -> None:
-            await asyncio.sleep(1)
+    async def slow_connection() -> None:
+        await asyncio.sleep(1)
 
     original_timeout = manager_module.close_timeout
     manager = manager_module.Manager()
-    manager._stack = SlowStack()  # type: ignore[assignment]
+    task = asyncio.create_task(slow_connection())
+    manager._connection_tasks = [task]
     monkeypatch.setattr(manager_module, "close_timeout", 0.01)
     try:
         await manager.close()
@@ -158,6 +158,7 @@ async def test_close_timeout_does_not_block(monkeypatch: Any, capsys: Any) -> No
         monkeypatch.setattr(manager_module, "close_timeout", original_timeout)
 
     assert "close timeout" in capsys.readouterr().err
+    assert task.cancelled()
 
 
 @async_test
@@ -236,7 +237,7 @@ async def test_http_transport_passes_configured_headers(monkeypatch: Any) -> Non
 
 
 @async_test
-async def test_stdio_server_end_to_end() -> None:
+async def test_stdio_server_end_to_end(capsys: Any) -> None:
     script = Path(__file__).parent / "fixtures" / "stdio_mcp_server.py"
     config = Config(
         {
@@ -260,9 +261,11 @@ async def test_stdio_server_end_to_end() -> None:
     finally:
         await manager.close()
 
+    assert "close failed" not in capsys.readouterr().err
+
 
 @async_test
-async def test_streamable_http_server_end_to_end() -> None:
+async def test_streamable_http_server_end_to_end(capsys: Any) -> None:
     script = Path(__file__).parent / "fixtures" / "http_mcp_server.py"
     port = _unused_port()
     environment = {**os.environ, "MCP_TEST_PORT": str(port)}
@@ -292,6 +295,7 @@ async def test_streamable_http_server_end_to_end() -> None:
             assert not result.is_error
         finally:
             await manager.close()
+        assert "close failed" not in capsys.readouterr().err
     finally:
         process.terminate()
         try:
