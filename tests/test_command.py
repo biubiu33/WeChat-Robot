@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from mewcode.command import (
-    REVIEW_PROMPT,
     Command,
     CommandConflictError,
     CommandDispatcher,
@@ -16,8 +15,11 @@ from mewcode.command import (
     InputKind,
     MemorySnapshot,
     SessionSnapshot,
+    SkillSnapshot,
+    SkillsSnapshot,
     StatusSnapshot,
     new_default_command_registry,
+    new_skill_commands,
     parse_input,
 )
 from mewcode.permission import Mode
@@ -40,6 +42,10 @@ class FakeControl:
         self.memory = MemorySnapshot(("project_api.md",), ("user_style.md",))
         self.session: SessionSnapshot | None = SessionSnapshot(
             "20260720-120000-abcd", str(Path("session.jsonl").resolve())
+        )
+        self.skills = SkillsSnapshot(
+            (SkillSnapshot("review-skill", "审查代码", "user", True),),
+            ("broken.md: YAML 错误",),
         )
 
     async def show_message(self, text: str) -> None:
@@ -84,6 +90,12 @@ class FakeControl:
 
     def session_snapshot(self) -> SessionSnapshot | None:
         return self.session
+
+    def skills_snapshot(self) -> SkillsSnapshot:
+        return self.skills
+
+    async def run_skill(self, name: str, argument: str) -> None:
+        self.events.append(("skill", (name, argument)))
 
 
 async def noop_handler(context, argument: str) -> None:
@@ -244,7 +256,7 @@ def test_default_registry_has_exact_public_commands_aliases_and_types() -> None:
         "memory",
         "permission",
         "session",
-        "review",
+        "skill",
     }
     assert commands["help"].aliases == ("h",)
     assert commands["clear"].aliases == ("c",)
@@ -335,10 +347,12 @@ def test_plan_and_do_use_required_order_and_prompt() -> None:
     ]
 
 
-def test_review_only_sends_fixed_prompt() -> None:
-    control = dispatch("/review")
+def test_dynamic_review_skill_uses_the_skill_execution_path() -> None:
+    registry = new_default_command_registry()
+    registry.replace_dynamic((), new_skill_commands((("review", "审查代码"),)))
+    control = dispatch("/review current change", registry=registry)
 
-    assert control.events == [("send", REVIEW_PROMPT)]
+    assert control.events == [("skill", ("review", "current change"))]
 
 
 @pytest.mark.parametrize(
@@ -355,3 +369,30 @@ def test_ui_commands_delegate_to_control(name: str, event: str) -> None:
     control = dispatch(f"/{name}")
 
     assert control.events == [(event, None)]
+
+
+def test_skill_command_lists_metadata_without_sop_and_dynamic_commands_delegate() -> (
+    None
+):
+    listed = dispatch("/skill")
+    output = str(listed.events[0][1])
+    assert "/review-skill" in output
+    assert "[user] [已激活]" in output
+    assert "YAML 错误" in output
+    assert "完整 SOP" not in output
+
+    registry = new_default_command_registry()
+    registry.replace_dynamic((), new_skill_commands((("review-skill", "审查代码"),)))
+    control = dispatch("/review-skill API", registry=registry)
+    assert control.events == [("skill", ("review-skill", "API"))]
+
+
+def test_dynamic_command_replacement_is_atomic_on_conflict() -> None:
+    registry = new_default_command_registry()
+    registry.replace_dynamic((), new_skill_commands((("custom", "自定义"),)))
+
+    with pytest.raises(CommandConflictError):
+        registry.replace_dynamic(("custom",), new_skill_commands((("help", "冲突"),)))
+
+    assert registry.resolve("custom") is not None
+    assert registry.resolve("help") is not None

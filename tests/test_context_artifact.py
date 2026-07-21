@@ -67,3 +67,24 @@ def test_manual_compact_writes_checkpoint_without_rewriting_archive(
     assert len(conv.messages()) == 5
     assert [event.type for event in read_events(path)].count("message") == 6
     assert any(event.type == "compact" for event in read_events(path))
+
+
+def test_request_budget_counts_dynamic_environment_text(tmp_path: Path) -> None:
+    class ProviderStub:
+        def redact(self, text: str) -> str:
+            return text
+
+    writer = ArchiveWriter(tmp_path / "session.jsonl")
+    controller = ContextController(
+        ProviderStub(), writer, tmp_path / "cache", 1_000_000
+    )
+    conversation = Conversation()
+    conversation.add_user("任务")
+
+    base = controller.request_chars(conversation.messages(), "stable", [], "环境")
+    with_skill = controller.request_chars(
+        conversation.messages(), "stable", [], "完整 Skill SOP\n\n环境"
+    )
+    writer.close()
+
+    assert with_skill - base == len("完整 Skill SOP\n\n")

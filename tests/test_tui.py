@@ -4,11 +4,13 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
 from io import StringIO
+from pathlib import Path
 from typing import Any, TypeVar
 
 from rich.console import Console
 from mewcode.config import ProviderConfig
 from mewcode.permission import Mode
+from mewcode.skill import SkillCatalog, SkillRuntime
 from mewcode.llm import Request, StreamEvent, ToolCall, Usage
 from mewcode.tool import Registry, Result, new_default_registry
 from mewcode.tui.app import MewCodeApp, SessionState
@@ -48,7 +50,7 @@ class FakeProvider:
 
     async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
         self.requests += 1
-        assert len(req.tools) == 6
+        assert len(req.tools) == 8
         assert req.system.stable
         assert "环境信息" in req.system.environment
         yield StreamEvent(text=f"回复 {self.requests}")
@@ -80,6 +82,16 @@ class SuccessfulTool:
 
     async def execute(self, args: str) -> Result:
         return Result("第一行\n第二行")
+
+
+def empty_skill_runtime(tmp_path: Path) -> SkillRuntime:
+    return SkillRuntime(
+        SkillCatalog.load(
+            tmp_path,
+            tmp_path / "user-skills",
+            tmp_path / "builtin-skills",
+        )
+    )
 
 
 async def _wait_until_idle(app: MewCodeApp) -> None:
@@ -220,9 +232,9 @@ def test_semantic_entries_and_collapsed_tool_result_are_safe() -> None:
 
 
 @async_test
-async def test_tool_events_create_collapsed_timeline_result_and_clear_activity() -> (
-    None
-):
+async def test_tool_events_create_collapsed_timeline_result_and_clear_activity(
+    tmp_path: Path,
+) -> None:
     class ToolProvider(FakeProvider):
         async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
             self.requests += 1
@@ -244,7 +256,9 @@ async def test_tool_events_create_collapsed_timeline_result_and_clear_activity()
     )
     registry = Registry()
     registry.register(SuccessfulTool())
-    app = MewCodeApp([config], registry=registry)
+    app = MewCodeApp(
+        [config], registry=registry, skill_runtime=empty_skill_runtime(tmp_path)
+    )
     provider = ToolProvider()
 
     async with app.run_test() as pilot:
@@ -363,7 +377,7 @@ async def test_tui_provider_error_keeps_conversation_valid_and_recovers() -> Non
 
 
 @async_test
-async def test_tui_approval_menu_allows_once_and_mode_cycles() -> None:
+async def test_tui_approval_menu_allows_once_and_mode_cycles(tmp_path: Path) -> None:
     class ApprovalProvider(FakeProvider):
         async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
             self.requests += 1
@@ -388,7 +402,9 @@ async def test_tui_approval_menu_allows_once_and_mode_cycles() -> None:
     registry = Registry()
     log: list[str] = []
     registry.register(RecordingWriteTool(log))
-    app = MewCodeApp([config], registry=registry)
+    app = MewCodeApp(
+        [config], registry=registry, skill_runtime=empty_skill_runtime(tmp_path)
+    )
     provider = ApprovalProvider()
 
     async with app.run_test() as pilot:
@@ -427,7 +443,9 @@ async def test_tui_approval_menu_allows_once_and_mode_cycles() -> None:
 
 
 @async_test
-async def test_tui_escape_cancels_approval_and_allows_followup() -> None:
+async def test_tui_escape_cancels_approval_and_allows_followup(
+    tmp_path: Path,
+) -> None:
     class ApprovalThenReplyProvider(FakeProvider):
         async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
             self.requests += 1
@@ -451,7 +469,9 @@ async def test_tui_escape_cancels_approval_and_allows_followup() -> None:
     )
     registry = Registry()
     registry.register(RecordingWriteTool([]))
-    app = MewCodeApp([config], registry=registry)
+    app = MewCodeApp(
+        [config], registry=registry, skill_runtime=empty_skill_runtime(tmp_path)
+    )
     provider = ApprovalThenReplyProvider()
 
     async with app.run_test() as pilot:

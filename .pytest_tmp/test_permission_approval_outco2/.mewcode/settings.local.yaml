@@ -1,0 +1,4 @@
+permissions:
+  allow:
+  - Write(src/a.py)
+  deny: []

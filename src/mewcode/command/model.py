@@ -72,6 +72,20 @@ class SessionSnapshot:
     archive_path: str
 
 
+@dataclass(frozen=True)
+class SkillSnapshot:
+    name: str
+    description: str
+    source: str
+    active: bool = False
+
+
+@dataclass(frozen=True)
+class SkillsSnapshot:
+    skills: tuple[SkillSnapshot, ...] = ()
+    diagnostics: tuple[str, ...] = ()
+
+
 class CommandControl(Protocol):
     async def show_message(self, text: str) -> None: ...
 
@@ -94,6 +108,10 @@ class CommandControl(Protocol):
     def memory_snapshot(self) -> MemorySnapshot: ...
 
     def session_snapshot(self) -> SessionSnapshot | None: ...
+
+    def skills_snapshot(self) -> SkillsSnapshot: ...
+
+    async def run_skill(self, name: str, argument: str) -> None: ...
 
 
 @dataclass(frozen=True)

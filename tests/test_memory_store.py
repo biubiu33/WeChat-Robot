@@ -48,6 +48,28 @@ def test_store_truncates_large_injected_index(tmp_path: Path) -> None:
     assert store.prompt_index().endswith("(index truncated)\n")
 
 
+def test_store_repairs_empty_index_from_existing_notes(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "project" / ".mewcode" / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "MEMORY.md").write_text("项目标题\n", encoding="utf-8")
+    (memory_dir / "project_stack.md").write_text(
+        "---\n"
+        "type: project\n"
+        "title: 技术栈\n"
+        "created: 2026-07-21T00:00:00+08:00\n"
+        "updated: 2026-07-21T00:00:00+08:00\n"
+        "---\n"
+        "使用 FastAPI 和 PostgreSQL。\n",
+        encoding="utf-8",
+    )
+
+    store = MemoryStore(tmp_path / "project", tmp_path / "home")
+
+    assert store.prompt_index() == (
+        "- [project] 技术栈 — 使用 FastAPI 和 PostgreSQL。 <!-- project_stack.md -->\n"
+    )
+
+
 def test_store_lists_indexed_files_by_level_without_reading_notes(
     tmp_path: Path,
 ) -> None:

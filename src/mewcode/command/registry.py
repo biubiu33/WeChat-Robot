@@ -35,6 +35,30 @@ class CommandRegistry:
     def resolve(self, name: str) -> Command | None:
         return self._lookup.get(name.strip().lower())
 
+    def unregister(self, name: str) -> None:
+        normalized = _normalize_key(name, "命令名称")
+        command = self._commands.get(normalized)
+        if command is None:
+            return
+        del self._commands[normalized]
+        for key in (command.name, *command.aliases):
+            self._lookup.pop(key, None)
+
+    def replace_dynamic(
+        self, previous_names: tuple[str, ...], commands: tuple[Command, ...]
+    ) -> None:
+        previous_commands = self._commands.copy()
+        previous_lookup = self._lookup.copy()
+        try:
+            for name in previous_names:
+                self.unregister(name)
+            for command in commands:
+                self.register(command)
+        except Exception:
+            self._commands = previous_commands
+            self._lookup = previous_lookup
+            raise
+
     def public_commands(self) -> tuple[Command, ...]:
         return tuple(
             sorted(

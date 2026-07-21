@@ -68,6 +68,13 @@ def test_build_system_prompt_injects_instructions_and_memory() -> None:
     assert prompt.index("项目规则") < prompt.index("长期偏好")
 
 
+def test_build_system_prompt_injects_skill_metadata_without_sop() -> None:
+    prompt = build_system_prompt(skills="- `review`: 审查改动")
+
+    assert "## 可用 Skill\n- `review`: 审查改动" in prompt
+    assert "完整 SOP 正文" not in prompt
+
+
 def test_environment_is_dynamic_and_degrades_without_git(tmp_path) -> None:
     environment = gather_environment(
         "0.1.0",

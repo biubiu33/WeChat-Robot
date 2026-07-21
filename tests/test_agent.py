@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
@@ -24,6 +25,7 @@ from mewcode.agent import (
 from mewcode.conversation import Conversation
 from mewcode.llm import Request, StreamEvent, ToolCall, Usage
 from mewcode.permission import Outcome, new_engine
+from mewcode.skill import LoadSkillTool, SkillCatalog, SkillRuntime
 from mewcode.tool import Registry, Result, new_default_registry
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -520,3 +522,86 @@ async def test_cancel_while_waiting_for_permission_keeps_history_usable(
     assert any(event.notice == NOTICE_CANCELLED for event in events)
     assert conv.last_role() == "assistant"
     assert conv.messages()[-2].role == "tool"
+
+
+@async_test
+async def test_skill_activation_updates_the_next_request_context_tools_and_model(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    user = tmp_path / "user-skills"
+    builtin = tmp_path / "builtin-skills"
+    entry = user / "review.md"
+    entry.parent.mkdir(parents=True)
+    entry.write_text(
+        "---\n"
+        "name: review\n"
+        "description: 审查当前改动\n"
+        "allowed_tools: [read_file]\n"
+        "mode: inline\n"
+        "fork_history: none\n"
+        "model: skill-model\n"
+        "---\n"
+        "完整 SOP：{{args}}\n",
+        encoding="utf-8",
+    )
+    runtime = SkillRuntime(
+        SkillCatalog.load(project, user, builtin), {"read_file", "write_file"}
+    )
+    registry = Registry()
+    registry.register(RecordingTool("read_file", [], read_only=True))
+    registry.register(RecordingTool("write_file", []))
+    registry.register(LoadSkillTool(runtime))
+    first = FakeProvider(
+        [
+            [
+                StreamEvent(
+                    tool_calls=[
+                        ToolCall(
+                            "load-review",
+                            "load_skill",
+                            json.dumps({"name": "review", "argument": "API"}),
+                        )
+                    ]
+                ),
+                StreamEvent(done=True),
+            ]
+        ]
+    )
+    second = FakeProvider([[StreamEvent(text="审查完成"), StreamEvent(done=True)]])
+    second.model = "skill-model"
+    conv = Conversation()
+    conv.add_user("请审查 API")
+
+    agent = Agent(
+        first,
+        registry,
+        prompt_supplier=lambda: ("", "", runtime.available_prompt()),
+        environment_supplier=lambda environment: (
+            f"{runtime.active_environment()}\n\n{environment}"
+            if runtime.active_environment()
+            else environment
+        ),
+        tool_policy_supplier=runtime.ordinary_allowed_tools,
+        provider_supplier=lambda: (
+            second if runtime.requested_model() == "skill-model" else first
+        ),
+    )
+
+    events = await collect(agent, conv)
+
+    assert events[-1].done
+    assert len(first.requests) == 1
+    assert len(second.requests) == 1
+    before = first.requests[0]
+    after = second.requests[0]
+    assert "`review`: 审查当前改动" in before.system.stable
+    assert "完整 SOP" not in before.system.stable
+    assert after.system.environment.startswith("# 已激活 Skill")
+    assert "完整 SOP：API" in after.system.environment
+    assert [tool.name for tool in before.tools] == [
+        "read_file",
+        "write_file",
+        "load_skill",
+    ]
+    assert [tool.name for tool in after.tools] == ["read_file", "load_skill"]

@@ -80,6 +80,56 @@ def test_registry_rejects_duplicate_names() -> None:
 
 
 @async_test
+async def test_registry_keeps_system_tools_visible_but_enforces_allowed_tools() -> None:
+    class SystemTool:
+        read_only = True
+        system = True
+
+        def name(self) -> str:
+            return "load_skill"
+
+        def description(self) -> str:
+            return "加载 Skill"
+
+        def parameters(self) -> dict[str, object]:
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, raw: str) -> Result:
+            return Result("loaded")
+
+    class RegularTool(SystemTool):
+        system = False
+
+        def name(self) -> str:
+            return "regular"
+
+    registry = new_default_registry()
+    registry.register(SystemTool())
+    registry.register(RegularTool())
+
+    names = [item.name for item in registry.definitions({"read_file"})]
+    assert names == ["read_file", "load_skill"]
+    assert registry.is_system("load_skill")
+    assert registry.ordinary_names() == (
+        "read_file",
+        "write_file",
+        "edit_file",
+        "bash",
+        "glob",
+        "grep",
+        "regular",
+    )
+    assert not (
+        await registry.execute("regular", "{}", allowed_tools={"regular"})
+    ).is_error
+    forbidden = await registry.execute("regular", "{}", allowed_tools={"bash"})
+    assert forbidden.is_error and "tool_not_allowed" in forbidden.content
+    assert not (
+        await registry.execute("load_skill", "{}", allowed_tools=set())
+    ).is_error
+
+
+@async_test
 async def test_registry_returns_structured_errors_and_timeout() -> None:
     class BrokenTool:
         def name(self) -> str:

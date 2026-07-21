@@ -36,7 +36,11 @@ class ContextController:
         self._staleness = ""
 
     async def prepare_request(
-        self, conv: Conversation, stable: str, tools: list[ToolDefinition]
+        self,
+        conv: Conversation,
+        stable: str,
+        tools: list[ToolDefinition],
+        environment: str = "",
     ) -> list[str]:
         notices: list[str] = []
         updated, refs = self._artifacts.spill(conv.messages())
@@ -48,10 +52,11 @@ class ContextController:
         if self._circuit_open:
             return notices
         if self._estimator.exceeds(
-            self._request_chars(conv.messages(), stable, tools), self._context_window
+            self._request_chars(conv.messages(), stable, tools, environment),
+            self._context_window,
         ):
             try:
-                await self._compact(conv, stable, tools, manual=False)
+                await self._compact(conv, stable, tools, environment, manual=False)
                 notices.append("已压缩早期上下文")
             except Exception:
                 self._failure_count += 1
@@ -62,10 +67,14 @@ class ContextController:
         return notices
 
     async def compact_now(
-        self, conv: Conversation, stable: str, tools: list[ToolDefinition]
+        self,
+        conv: Conversation,
+        stable: str,
+        tools: list[ToolDefinition],
+        environment: str = "",
     ) -> str:
         try:
-            changed = await self._compact(conv, stable, tools, manual=True)
+            changed = await self._compact(conv, stable, tools, environment, manual=True)
         except Exception as exc:
             return f"上下文压缩失败: {self._provider.redact(str(exc))}"
         return "已压缩早期上下文" if changed else "当前上下文无需压缩"
@@ -86,9 +95,13 @@ class ContextController:
         self._estimator.record_usage(input_tokens, request_chars)
 
     def request_chars(
-        self, messages: list[Message], stable: str, tools: list[ToolDefinition]
+        self,
+        messages: list[Message],
+        stable: str,
+        tools: list[ToolDefinition],
+        environment: str = "",
     ) -> int:
-        return self._request_chars(messages, stable, tools)
+        return self._request_chars(messages, stable, tools, environment)
 
     def restore(self, archive: RestoredArchive) -> list[Message]:
         messages = list(archive.messages)
@@ -123,6 +136,7 @@ class ContextController:
         conv: Conversation,
         stable: str,
         tools: list[ToolDefinition],
+        environment: str,
         *,
         manual: bool,
     ) -> bool:
@@ -130,7 +144,8 @@ class ContextController:
         if len(messages) <= 5:
             return False
         if not manual and not self._estimator.exceeds(
-            self._request_chars(messages, stable, tools), self._context_window
+            self._request_chars(messages, stable, tools, environment),
+            self._context_window,
         ):
             return False
         retained = _retained_start(messages)
@@ -145,10 +160,15 @@ class ContextController:
         return True
 
     def _request_chars(
-        self, messages: list[Message], stable: str, tools: list[ToolDefinition]
+        self,
+        messages: list[Message],
+        stable: str,
+        tools: list[ToolDefinition],
+        environment: str,
     ) -> int:
         return (
             len(stable)
+            + len(environment)
             + len(self.system_context())
             + sum(
                 len(message.content)

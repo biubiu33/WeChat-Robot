@@ -132,7 +132,8 @@ python -m mewcode
 | `/memory` | 列出当前项目层与用户层记忆索引引用的文件名，不展开正文。 |
 | `/permission` | 显示当前权限模式。 |
 | `/session` | 显示当前 session ID 与 JSONL 档案路径。 |
-| `/review` | 向对话注入固定代码审查请求并立即触发 Agent 回合。 |
+| `/skill` | 列出当前可用与已激活的 Skill、来源和诊断摘要，不显示 SOP 正文。 |
+| `/<name> [参数]` | 执行发现到的 Skill；内置 `/commit`、`/review`、`/test` 与第三方 Skill 使用同一入口。 |
 | Esc | 命令菜单展开时关闭菜单并保留输入；否则取消当前 Agent Loop。 |
 | 流式状态 Ctrl+C | 取消当前 Agent Loop，保留会话继续对话。 |
 | 空闲状态 Ctrl+C / `/exit` | 退出程序。 |
@@ -140,6 +141,43 @@ python -m mewcode
 所有以 `/` 开头的输入都由本地命令分发器处理，未知命令不会发送给模型。`/help`、`/status`、`/memory`、`/permission`、`/session` 等纯本地命令不创建会话、不写入模型上下文，也不消耗模型 Token。
 
 命令菜单是输入框下方的内联列表，不会夺取输入焦点。规范名称和别名都会参与前缀匹配，但选择结果始终写回规范名称；输入包含参数、没有匹配项、离开 Slash 输入或按 Esc 时菜单关闭。`/h`、`/c` 仍可作为别名直接提交执行。
+
+### Skill
+
+Skill 用于把可复用的 AI 工作流封装为 Markdown 能力包。MewCode 启动时只把每个有效 Skill 的名称和一句说明注入给 Agent；模型需要执行时调用系统工具 `load_skill`，完整 SOP 才会进入后续每轮请求最前部的动态环境。
+
+Skill 按以下三层位置发现，同名时前者覆盖后者：
+
+1. `<项目根目录>/.mewcode/skills/`
+2. `~/.mewcode/skills/`
+3. MewCode 安装包内置目录
+
+根目录下的 `*.md` 是单文件 Skill。目录型 Skill 的入口固定为 `<skill-dir>/SKILL.md`，同目录可放模板、示例、参考文档和辅助脚本；这些附属文件不会被当作独立 Skill 发现或自动执行。
+
+每个入口以 YAML frontmatter 开始，正文是发给模型的 SOP。`{{args}}` 会被调用参数做字面替换：
+
+```markdown
+---
+name: review-api
+description: 审查指定 API 改动并报告风险
+allowed_tools: [read_file, glob, grep]
+mode: inline
+fork_history: none
+model: null
+---
+
+审查与“{{args}}”相关的改动，按严重程度报告问题和测试缺口。
+```
+
+`name`、`description`、`allowed_tools`、`mode` 和 `fork_history` 为必填字段。名称只能使用小写 ASCII 字母、数字和连字符；`mode` 为 `inline` 或 `fork`，当前 `fork_history` 固定为 `none`；`model` 可省略或指定模型名。格式错误的单个文件会出现在 `/skill` 的诊断摘要中，但不会阻断其他 Skill。
+
+`inline` 在当前主对话中执行，参数、工具过程和结果会保留在会话历史与 JSONL 档案中。`fork` 使用隔离 Agent 执行，不携带任何主对话历史，只接收 `/<name>` 后的参数；完成后只向主会话写入调用事件和简短摘要。
+
+激活 inline Skill 后，模型只能看到其 `allowed_tools` 声明的普通工具；`load_skill` 和 `install_skill` 是系统工具，不受该白名单影响，现有计划模式和权限规则仍然生效。启动时若任何有效 Skill 声明了不存在的普通工具，MewCode 会在进入 TUI 前报错。`/clear`、切换 Provider、恢复会话和退出程序都会清除已激活的 Skill。
+
+每个有效 Skill 都会自动注册 `/<name>`，并出现在 `/help` 与补全菜单。目录内容变更、安装成功和新回合开始时会自动刷新，无需重启。内置样板包含：`commit`（提交前检查与提交）、`review`（代码审查）和 `test`（隔离测试执行）。
+
+模型可通过 `install_skill` 从 HTTPS URL 或本地 ZIP 安装目录型 Skill 到用户级目录。安装拒绝明文 HTTP、非 ZIP 本地文件、路径穿越、绝对路径和符号链接，且不会执行包内脚本；同名已安装 Skill 不会被覆盖。本阶段不提供 Skill 市场、远程浏览、发布、评分或版本管理。
 
 ### 会话与恢复
 
@@ -190,8 +228,8 @@ python -m mewcode
 
 每轮请求由以下部分组成：
 
-1. 稳定系统提示：身份、系统约束、任务模式、动作执行、工具使用、语气风格和文本输出模块。
-2. 动态环境信息：工作目录、平台、日期、Git 状态、应用版本与模型。
+1. 稳定系统提示：身份、系统约束、任务模式、动作执行、工具使用、语气风格、可用 Skill 名称与说明，以及文本输出模块。
+2. 动态环境信息：已激活 Skill 的完整 SOP、工作目录、平台、日期、Git 状态、应用版本与模型。
 3. 持久对话历史与工具结果。
 4. 临时 `<system-reminder>`：用于计划模式等运行时约束，不写入会话历史。
 
@@ -218,12 +256,12 @@ python -m ruff format --check .
 
 - 已完成：多 Provider 流式 Agent、内置文件/命令工具、权限控制、计划模式，以及 stdio 和 Streamable HTTP MCP 工具发现与注册。
 - 已完成 Chapter 08 上下文与记忆系统：Provider `context_window`、隐藏系统上下文、工具结果缓存、九段式摘要和熔断、JSONL 会话档案、异步标题、三层项目指令、两级自动记忆、`/compact`、`/resume` 与会话重放。
-- 已完成 Chapter 09 Slash 命令注册与分发系统：十二个内置命令、别名、帮助、参数校验、实时内联补全、界面控制抽象和会话 Token usage 持久化。
+- 已完成 Chapter 09 Slash 命令注册与分发系统：本地命令、别名、帮助、参数校验、实时内联补全、界面控制抽象和会话 Token usage 持久化。
+- 已完成 Chapter 10 Skill 系统：三层发现与覆盖、两阶段 SOP 加载、inline/fork 执行、工具白名单、动态 Slash 命令、HTTPS/本地 ZIP 安装与内置 `commit`、`review`、`test` 样板。
 - 2026-07-20 已完成 Chapter 09 全量回归：`191 passed, 1 skipped`；编译、Ruff 检查和格式检查均通过。压缩检查点的多次恢复正确性仍列为已知技术债，见下方限制。
 
 ## 当前限制
 
-- 不支持 Skill 自动发现。
 - 不提供运行中切换 Provider/模型的命令。
 - 缓存命中由 Provider 决定，OpenAI 兼容端点可能不返回 `cached_tokens`。
 - 上下文压缩仍有两项已知限制：`/compact` 尚未按手动 3K Token 余量判定；摘要请求尚未包含工具结果正文。连续压缩后再恢复的检查点索引需要补充端到端回归与修复。

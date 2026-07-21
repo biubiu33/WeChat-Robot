@@ -95,7 +95,11 @@ class Agent:
         version: str = __version__,
         engine: Engine | None = None,
         context: ContextController | None = None,
-        prompt_supplier: Callable[[], tuple[str, str]] | None = None,
+        prompt_supplier: Callable[[], tuple[str, str] | tuple[str, str, str]]
+        | None = None,
+        environment_supplier: Callable[[str], str] | None = None,
+        tool_policy_supplier: Callable[[], frozenset[str] | None] | None = None,
+        provider_supplier: Callable[[], Provider] | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -103,6 +107,9 @@ class Agent:
         self._engine = engine if engine is not None else new_engine(Path.cwd())[0]
         self._context = context
         self._prompt_supplier = prompt_supplier
+        self._environment_supplier = environment_supplier
+        self._tool_policy_supplier = tool_policy_supplier
+        self._provider_supplier = provider_supplier
 
     async def run(
         self,
@@ -111,15 +118,6 @@ class Agent:
         cancel: asyncio.Event | None = None,
     ) -> AsyncIterator[Event]:
         cancel_event = cancel if cancel is not None else asyncio.Event()
-        definitions = self._definitions_for_mode(mode)
-        instructions, memory = (
-            self._prompt_supplier() if self._prompt_supplier else ("", "")
-        )
-        stable_system = build_system_prompt(instructions, memory)
-        environment = await asyncio.to_thread(
-            gather_environment, self._version, self._provider.model
-        )
-        environment_text = environment.render()
         unknown_run = 0
 
         for iteration in range(1, MAX_ITERATIONS + 1):
@@ -129,10 +127,21 @@ class Agent:
                 return
             yield Event(iter=iteration)
 
+            provider = self._provider_for_request()
+            allowed_tools = (
+                self._tool_policy_supplier() if self._tool_policy_supplier else None
+            )
+            definitions = self._definitions_for_mode(mode, allowed_tools)
+            instructions, memory, skills = self._prompt_values()
+            stable_system = build_system_prompt(instructions, memory, skills)
+            environment = await asyncio.to_thread(
+                gather_environment, self._version, provider.model
+            )
+            environment_text = self._environment_for_request(environment.render())
             reminder = self._reminder_for(mode, iteration)
             if self._context is not None:
                 for notice in await self._context.prepare_request(
-                    conv, stable_system, definitions
+                    conv, stable_system, definitions, environment_text
                 ):
                     yield Event(notice=notice)
             request = Request(
@@ -147,7 +156,7 @@ class Agent:
             )
 
             outcome: _StreamOutcome | None = None
-            async for item in self._stream_once(request, cancel_event):
+            async for item in self._stream_once(provider, request, cancel_event):
                 if isinstance(item, Event):
                     yield item
                 else:
@@ -167,7 +176,10 @@ class Agent:
                     self._context.record_usage(
                         outcome.usage.input_tokens,
                         self._context.request_chars(
-                            conv.messages(), stable_system, definitions
+                            conv.messages(),
+                            stable_system,
+                            definitions,
+                            environment_text,
                         ),
                     )
                 yield Event(
@@ -196,6 +208,7 @@ class Agent:
                 cancel_event,
                 mode=mode,
                 read_only_only=mode is Mode.PLAN,
+                allowed_tools=allowed_tools,
             ):
                 if isinstance(item, Event):
                     yield item
@@ -221,13 +234,14 @@ class Agent:
 
     async def _stream_once(
         self,
+        provider: Provider,
         request: Request,
         cancel: asyncio.Event,
     ) -> AsyncIterator[Event | _StreamOutcome]:
         text = ""
         calls: list[ToolCall] = []
         usage: LlmUsage | None = None
-        stream = self._provider.stream(request)
+        stream = provider.stream(request)
         iterator = stream.__aiter__()
         next_event: asyncio.Task[object] | None = None
         cancelled: asyncio.Task[bool] | None = None
@@ -288,6 +302,7 @@ class Agent:
         *,
         mode: Mode,
         read_only_only: bool,
+        allowed_tools: frozenset[str] | None,
     ) -> AsyncIterator[Event | _ExecutionOutcome]:
         results: list[ToolResult | None] = [None] * len(calls)
         index = 0
@@ -297,6 +312,15 @@ class Agent:
                 self._cancel_remaining(calls, results, index)
                 yield _ExecutionOutcome(self._finalize_results(results), False)
                 return
+
+            if not self._tool_is_allowed(calls[index].name, allowed_tools):
+                call = calls[index]
+                yield Event(tool=self._tool_start(call))
+                result = self._tool_restricted_result(call)
+                results[index] = result
+                yield Event(tool=self._tool_end(call, result))
+                index += 1
+                continue
 
             if read_only_only and not self._registry.is_read_only(calls[index].name):
                 call = calls[index]
@@ -342,7 +366,9 @@ class Agent:
                         results[call_index] = self._permission_denied_result(
                             call, "只读工具权限判定异常，安全拒绝"
                         )
-                batch = await self._execute_read_batch(calls, results, allowed, cancel)
+                batch = await self._execute_read_batch(
+                    calls, results, allowed, cancel, allowed_tools
+                )
                 for call_index in range(index, end):
                     yield Event(
                         tool=self._tool_end(calls[call_index], results[call_index])
@@ -358,7 +384,7 @@ class Agent:
             yield Event(tool=self._tool_start(call))
             decision, reason = self._engine.check(mode, call, False)
             if decision is Decision.ALLOW:
-                result, completed = await self._execute_one(call, cancel)
+                result, completed = await self._execute_one(call, cancel, allowed_tools)
             elif decision is Decision.DENY:
                 result, completed = self._permission_denied_result(call, reason), True
             else:
@@ -383,7 +409,9 @@ class Agent:
                             self._engine.persist_local_allow(call)
                         except Exception:
                             pass
-                    result, completed = await self._execute_one(call, cancel)
+                    result, completed = await self._execute_one(
+                        call, cancel, allowed_tools
+                    )
             results[index] = result
             yield Event(tool=self._tool_end(call, result))
             if not completed:
@@ -400,9 +428,10 @@ class Agent:
         results: list[ToolResult | None],
         indexes: list[int],
         cancel: asyncio.Event,
+        allowed_tools: frozenset[str] | None,
     ) -> bool:
         tasks = [
-            asyncio.create_task(self._execute_one(calls[index], cancel))
+            asyncio.create_task(self._execute_one(calls[index], cancel, allowed_tools))
             for index in indexes
         ]
         completed = True
@@ -454,12 +483,18 @@ class Agent:
         self,
         call: ToolCall,
         cancel: asyncio.Event,
+        allowed_tools: frozenset[str] | None,
     ) -> tuple[ToolResult, bool]:
         if cancel.is_set():
             return self._cancelled_result(call), False
 
         execution = asyncio.create_task(
-            self._registry.execute(call.name, call.input, timeout=DEFAULT_TIMEOUT)
+            self._registry.execute(
+                call.name,
+                call.input,
+                timeout=DEFAULT_TIMEOUT,
+                allowed_tools=allowed_tools,
+            )
         )
         cancelled = asyncio.create_task(cancel.wait())
         try:
@@ -482,10 +517,30 @@ class Agent:
                 cancelled.cancel()
             await asyncio.gather(cancelled, return_exceptions=True)
 
-    def _definitions_for_mode(self, mode: Mode) -> list[ToolDefinition]:
+    def _definitions_for_mode(
+        self, mode: Mode, allowed_tools: frozenset[str] | None
+    ) -> list[ToolDefinition]:
         if mode is Mode.PLAN:
-            return self._registry.read_only_definitions()
-        return self._registry.definitions()
+            return self._registry.read_only_definitions(allowed_tools)
+        return self._registry.definitions(allowed_tools)
+
+    def _prompt_values(self) -> tuple[str, str, str]:
+        if self._prompt_supplier is None:
+            return "", "", ""
+        values = self._prompt_supplier()
+        if len(values) == 2:
+            instructions, memory = values
+            return instructions, memory, ""
+        instructions, memory, skills = values
+        return instructions, memory, skills
+
+    def _environment_for_request(self, environment: str) -> str:
+        if self._environment_supplier is None:
+            return environment
+        return self._environment_supplier(environment)
+
+    def _provider_for_request(self) -> Provider:
+        return self._provider_supplier() if self._provider_supplier else self._provider
 
     def _reminder_for(self, mode: Mode, iteration: int) -> str:
         if mode is not Mode.PLAN:
@@ -532,6 +587,17 @@ class Agent:
             f"计划模式只允许只读工具，未执行: {call.name}",
         )
         return self._to_tool_result(call, result)
+
+    def _tool_restricted_result(self, call: ToolCall) -> ToolResult:
+        result = error_result("tool_not_allowed", f"当前 Skill 不允许工具: {call.name}")
+        return self._to_tool_result(call, result)
+
+    def _tool_is_allowed(self, name: str, allowed_tools: frozenset[str] | None) -> bool:
+        return (
+            allowed_tools is None
+            or name in allowed_tools
+            or self._registry.is_system(name)
+        )
 
     def _cancel_remaining(
         self,

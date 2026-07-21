@@ -29,9 +29,13 @@ def assemble_system(modules: Sequence[Module]) -> str:
     return "\n\n".join(rendered)
 
 
-def build_system_prompt(instructions: str = "", memory: str = "") -> str:
+def build_system_prompt(
+    instructions: str = "", memory: str = "", skills: str = ""
+) -> str:
     """构造跨轮稳定、可用于缓存的系统提示。"""
-    return assemble_system([*fixed_modules(), *optional_modules(instructions, memory)])
+    return assemble_system(
+        [*fixed_modules(), *optional_modules(instructions, memory, skills)]
+    )
 
 
 def render_banner(version: str, cwd: str) -> str:

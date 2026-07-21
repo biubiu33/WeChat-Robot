@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -19,9 +20,11 @@ from textual.widgets import OptionList, Static, TextArea
 from mewcode.agent import ApprovalRequest
 from mewcode import __version__
 from mewcode.command import (
+    CommandConflictError,
     CommandDispatcher,
     CommandRegistry,
     InputKind,
+    new_skill_commands,
     new_default_command_registry,
     parse_input,
 )
@@ -30,9 +33,19 @@ from mewcode.conversation import Conversation
 from mewcode.llm import Provider, new_provider
 from mewcode.memory import InstructionBundle, MemoryManager
 from mewcode.permission import Engine, Mode, Outcome, new_engine
-from mewcode.prompt import render_banner
+from mewcode.prompt import gather_environment, render_banner
 from mewcode.session import SessionStats
 from mewcode.session.repository import SessionRepository
+from mewcode.skill import (
+    ActiveSkill,
+    ForkSkillRunner,
+    InstallSkillTool,
+    LoadSkillTool,
+    SkillCatalog,
+    SkillInstaller,
+    SkillRuntime,
+    SkillValidationError,
+)
 from mewcode.session.runtime import SessionRuntime
 from mewcode.tool import Registry, new_default_registry
 
@@ -52,6 +65,7 @@ class SessionState(Enum):
     IDLE = "idle"
     STREAMING = "streaming"
     APPROVING = "approving"
+    FORKING = "forking"
     COMPACTING = "compacting"
     RESUMING = "resuming"
 
@@ -232,19 +246,29 @@ class MewCodeApp(App):
         instructions: InstructionBundle | None = None,
         memory_manager: MemoryManager | None = None,
         session_repository: SessionRepository | None = None,
+        skill_runtime: SkillRuntime | None = None,
     ) -> None:
         super().__init__()
         self.providers = providers
         self.version = version
         self.registry = registry if registry is not None else new_default_registry()
+        self.root = (Path.cwd() if root is None else root).resolve()
+        self.engine = engine if engine is not None else new_engine(os.getcwd())[0]
+        self.skill_runtime = skill_runtime or SkillRuntime(
+            SkillCatalog.load(self.root), self.registry.ordinary_names()
+        )
+        self._skill_command_names: tuple[str, ...] = ()
+        self._skill_provider_cache: dict[str, Provider] = {}
         self.command_registry = (
             command_registry
             if command_registry is not None
             else new_default_command_registry()
         )
+        self._register_skill_tools()
+        error = self.refresh_skills()
+        if error is not None:
+            raise RuntimeError(error)
         self.command_dispatcher = CommandDispatcher(self.command_registry)
-        self.engine = engine if engine is not None else new_engine(os.getcwd())[0]
-        self.root = (Path.cwd() if root is None else root).resolve()
         self.instructions = (
             instructions if instructions is not None else InstructionBundle("")
         )
@@ -278,6 +302,73 @@ class MewCodeApp(App):
         from .command import TuiCommandControl
 
         self.command_control = TuiCommandControl(self)
+
+    def _register_skill_tools(self) -> None:
+        tools = (
+            LoadSkillTool(self.skill_runtime, _AppForkExecutor(self)),
+            InstallSkillTool(
+                SkillInstaller(
+                    self.skill_runtime.catalog.user_root,
+                    set(self.registry.ordinary_names()),
+                ),
+                self.refresh_skills,
+            ),
+        )
+        for tool in tools:
+            existing = self.registry.get(tool.name())
+            if existing is None:
+                self.registry.register(tool)
+                continue
+            if not getattr(existing, "system", False):
+                raise RuntimeError(f"系统工具名称冲突: {tool.name()}")
+
+    def refresh_skills(self) -> str | None:
+        """Reload changed Skills and atomically rebuild their slash commands."""
+        try:
+            refresh = self.skill_runtime.refresh()
+        except SkillValidationError as exc:
+            return f"Skill 热更新失败: {exc}"
+
+        commands = new_skill_commands(
+            tuple(
+                (skill.metadata.name, skill.metadata.description)
+                for skill in self.skill_runtime.catalog.effective()
+            )
+        )
+        try:
+            self.command_registry.replace_dynamic(self._skill_command_names, commands)
+        except CommandConflictError as exc:
+            return f"Skill 命令注册失败: {exc}"
+        self._skill_command_names = tuple(command.name for command in commands)
+
+        if refresh.removed:
+            return "已移除失效的活动 Skill: " + ", ".join(refresh.removed)
+        return None
+
+    def skill_environment(self, environment: str) -> str:
+        active = self.skill_runtime.active_environment()
+        return f"{active}\n\n{environment}" if active else environment
+
+    def current_definitions(self):
+        allowed = self.skill_runtime.ordinary_allowed_tools()
+        if self.mode is Mode.PLAN:
+            return self.registry.read_only_definitions(allowed)
+        return self.registry.definitions(allowed)
+
+    def provider_for_skill(self, model: str | None) -> Provider:
+        if self.provider is None:
+            raise RuntimeError("尚未选择 Provider")
+        if (
+            model is None
+            or self.provider_config is None
+            or model == self.provider_config.model
+        ):
+            return self.provider
+        cached = self._skill_provider_cache.get(model)
+        if cached is None:
+            cached = new_provider(replace(self.provider_config, model=model))
+            self._skill_provider_cache[model] = cached
+        return cached
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -336,6 +427,10 @@ class MewCodeApp(App):
         if self.state is not SessionState.IDLE:
             return
 
+        notice = self.refresh_skills()
+        if notice is not None:
+            await self.append_timeline(notice_entry(notice))
+
         text_area = self.query_one("#input", TextArea)
         parsed = parse_input(text_area.text)
         if parsed.kind is InputKind.EMPTY:
@@ -355,6 +450,7 @@ class MewCodeApp(App):
             self.accept_command_completion()
 
     def refresh_command_menu(self) -> None:
+        self.refresh_skills()
         text_area = self.query_one("#input", TextArea)
         menu = self.query_one("#command-completion-menu", CommandCompletionMenu)
         text = text_area.text
@@ -438,9 +534,50 @@ class MewCodeApp(App):
         self._timer = self.set_interval(0.1, lambda: tick(self, SessionState.STREAMING))
         self._stream_task = asyncio.create_task(consume_stream(self))
 
+    async def start_fork_skill(self, skill: ActiveSkill) -> None:
+        if self.state is not SessionState.IDLE or self.provider is None:
+            return
+        self._ensure_runtime()
+        invocation = f"执行 Skill {skill.name}: {skill.argument}".rstrip()
+        self.conv.add_user(invocation)
+        self.session_stats.turns += 1
+        await self.append_timeline(user_entry(invocation))
+        text_area = self.query_one("#input", TextArea)
+        text_area.text = ""
+        text_area.read_only = True
+        self.turn_cancel = asyncio.Event()
+        self.turn_start = time.monotonic()
+        self.state = SessionState.FORKING
+        self.refresh_status()
+        self.query_one("#streaming", Static).update(
+            f"正在隔离执行 Skill {skill.name}..."
+        )
+        self._stream_task = asyncio.create_task(self._consume_fork_skill(skill))
+
+    async def _consume_fork_skill(self, skill: ActiveSkill) -> None:
+        from .stream import finish_with_assistant, finish_with_error
+
+        try:
+            summary = await self.run_fork_skill(skill)
+        except Exception as exc:
+            await finish_with_error(self, exc)
+            return
+        await finish_with_assistant(self, summary)
+
+    async def run_fork_skill(self, skill: ActiveSkill) -> str:
+        runner = ForkSkillRunner(self.registry, self.engine, self.mode)
+        summary = await runner.run(
+            skill,
+            self.provider_for_skill(skill.model),
+            self.turn_cancel,
+        )
+        return summary.text
+
     def activate_provider(self, cfg: ProviderConfig) -> None:
         self.provider = new_provider(cfg)
         self.provider_config = cfg
+        self.skill_runtime.clear()
+        self._skill_provider_cache.clear()
         if self.runtime is not None:
             self.runtime.close()
         self.runtime = None
@@ -485,7 +622,20 @@ class MewCodeApp(App):
         self.refresh_status()
         stable = self._stable_prompt()
         result = await self.runtime.context.compact_now(
-            self.conv, stable, self.registry.definitions()
+            self.conv,
+            stable,
+            self.current_definitions(),
+            self.skill_environment(
+                (
+                    await asyncio.to_thread(
+                        gather_environment,
+                        self.version,
+                        self.provider_for_skill(
+                            self.skill_runtime.requested_model()
+                        ).model,
+                    )
+                ).render()
+            ),
         )
         await self.append_timeline(notice_entry(result))
         self.runtime.writer.append_visible("notice", result)
@@ -523,6 +673,7 @@ class MewCodeApp(App):
             self.runtime = None
             self.conv = Conversation()
             self.session_stats = SessionStats()
+            self.skill_runtime.clear()
             return True
         if self.provider is not None and self.provider_config is not None:
             archive = self.session_repository.restore(session_id)
@@ -546,6 +697,7 @@ class MewCodeApp(App):
         try:
             if summary is None or self.provider is None or self.provider_config is None:
                 return
+            self.skill_runtime.clear()
             session_id = getattr(summary, "session_id", "")
             archive = self.session_repository.restore(session_id)
             stale = (
@@ -624,7 +776,9 @@ class MewCodeApp(App):
         from mewcode.prompt import build_system_prompt
 
         return build_system_prompt(
-            self.instructions.content, self.memory_manager.prompt_index()
+            self.instructions.content,
+            self.memory_manager.prompt_index(),
+            self.skill_runtime.available_prompt(),
         )
 
     async def append_timeline(self, entry: Widget) -> None:
@@ -635,10 +789,15 @@ class MewCodeApp(App):
             self._stream_task.cancel()
         if self.runtime is not None:
             self.runtime.close()
+        self.skill_runtime.clear()
         self.exit()
 
     def action_cancel_or_quit(self) -> None:
-        if self.state in (SessionState.STREAMING, SessionState.APPROVING):
+        if self.state in (
+            SessionState.STREAMING,
+            SessionState.APPROVING,
+            SessionState.FORKING,
+        ):
             self.action_cancel_turn()
             return
         self.exit()
@@ -649,7 +808,8 @@ class MewCodeApp(App):
                 self.pending.respond.set_result(Outcome.DENY_ONCE)
             self.pending = None
         if (
-            self.state in (SessionState.STREAMING, SessionState.APPROVING)
+            self.state
+            in (SessionState.STREAMING, SessionState.APPROVING, SessionState.FORKING)
             and self.turn_cancel is not None
         ):
             self.turn_cancel.set()
@@ -722,3 +882,11 @@ class MewCodeApp(App):
         except Exception:
             return
         input_area.read_only = state is not SessionState.IDLE
+
+
+class _AppForkExecutor:
+    def __init__(self, app: MewCodeApp) -> None:
+        self._app = app
+
+    async def run(self, skill: ActiveSkill) -> str:
+        return await self._app.run_fork_skill(skill)

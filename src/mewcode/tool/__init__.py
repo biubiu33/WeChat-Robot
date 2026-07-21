@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Collection, Protocol, runtime_checkable
 
 from mewcode.llm import ToolDefinition
 
@@ -47,7 +47,9 @@ class Registry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
-    def definitions(self) -> list[ToolDefinition]:
+    def definitions(
+        self, allowed_tools: Collection[str] | None = None
+    ) -> list[ToolDefinition]:
         return [
             ToolDefinition(
                 name=name,
@@ -55,9 +57,12 @@ class Registry:
                 input_schema=self._tools[name].parameters(),
             )
             for name in self._order
+            if self._is_visible(name, allowed_tools)
         ]
 
-    def read_only_definitions(self) -> list[ToolDefinition]:
+    def read_only_definitions(
+        self, allowed_tools: Collection[str] | None = None
+    ) -> list[ToolDefinition]:
         return [
             ToolDefinition(
                 name=name,
@@ -66,21 +71,32 @@ class Registry:
             )
             for name in self._order
             if getattr(self._tools[name], "read_only", False) is True
+            and self._is_visible(name, allowed_tools)
         ]
 
     def is_read_only(self, name: str) -> bool:
         tool = self.get(name)
         return bool(tool is not None and getattr(tool, "read_only", False))
 
+    def is_system(self, name: str) -> bool:
+        tool = self.get(name)
+        return bool(tool is not None and getattr(tool, "system", False))
+
+    def ordinary_names(self) -> tuple[str, ...]:
+        return tuple(name for name in self._order if not self.is_system(name))
+
     async def execute(
         self,
         name: str,
         args: str,
         timeout: float = DEFAULT_TIMEOUT,
+        allowed_tools: Collection[str] | None = None,
     ) -> Result:
         tool = self.get(name)
         if tool is None:
             return error_result("unknown_tool", f"未知工具: {name}")
+        if not self._is_visible(name, allowed_tools):
+            return error_result("tool_not_allowed", f"当前 Skill 不允许工具: {name}")
 
         normalized_args = args.strip() or "{}"
         try:
@@ -93,6 +109,9 @@ class Registry:
             raise
         except Exception as exc:
             return error_result("internal_error", f"工具 {name} 执行失败: {exc}")
+
+    def _is_visible(self, name: str, allowed_tools: Collection[str] | None) -> bool:
+        return allowed_tools is None or name in allowed_tools or self.is_system(name)
 
 
 def parse_arguments(args: str) -> tuple[dict[str, Any] | None, Result | None]:

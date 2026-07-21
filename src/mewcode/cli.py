@@ -13,6 +13,7 @@ from mewcode.memory import InstructionLoader, MemoryManager
 from mewcode.permission import new_engine
 from mewcode.session.paths import ensure_project_layout
 from mewcode.session.repository import SessionRepository
+from mewcode.skill import SkillCatalog, SkillRuntime
 from mewcode.tool import new_default_registry
 
 
@@ -23,6 +24,8 @@ async def _run_app(providers: object, root: Path) -> None:
     try:
         for mcp_tool in manager.tools():
             registry.register(mcp_tool)
+
+        skill_runtime = SkillRuntime(SkillCatalog.load(root), registry.ordinary_names())
 
         engine, engine_error = new_engine(root)
         if engine_error is not None:
@@ -48,6 +51,7 @@ async def _run_app(providers: object, root: Path) -> None:
             instructions=instructions,
             memory_manager=memory_manager,
             session_repository=session_repository,
+            skill_runtime=skill_runtime,
         )
         await app.run_async()
         await asyncio.gather(cleanup_task, return_exceptions=True)

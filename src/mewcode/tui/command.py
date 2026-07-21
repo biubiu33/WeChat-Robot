@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mewcode.command import MemorySnapshot, SessionSnapshot, StatusSnapshot
+from mewcode.command import (
+    MemorySnapshot,
+    SessionSnapshot,
+    SkillSnapshot,
+    SkillsSnapshot,
+    StatusSnapshot,
+)
 from mewcode.permission import Mode
 from mewcode.session import SessionStats
 from mewcode.session.runtime import SessionRuntime
+from mewcode.skill import SkillError, SkillMode
 
 from .timeline import Timeline
 from .view import command_output_entry, notice_entry
@@ -36,6 +43,7 @@ class TuiCommandControl:
             return
         if self.app.runtime is not None:
             self.app.runtime.close()
+        self.app.skill_runtime.clear()
         self.app.runtime = SessionRuntime.new(
             self.app.root,
             self.app.provider,
@@ -63,11 +71,7 @@ class TuiCommandControl:
 
     def status_snapshot(self) -> StatusSnapshot:
         memory = self.memory_snapshot()
-        definitions = (
-            self.app.registry.read_only_definitions()
-            if self.app.mode is Mode.PLAN
-            else self.app.registry.definitions()
-        )
+        definitions = self.app.current_definitions()
         return StatusSnapshot(
             str(self.app.mode),
             self.app.session_stats.input_tokens,
@@ -92,3 +96,39 @@ class TuiCommandControl:
             self.app.runtime.paths.session_id,
             str(self.app.runtime.paths.archive_path.resolve()),
         )
+
+    def skills_snapshot(self) -> SkillsSnapshot:
+        active = {skill.name for skill in self.app.skill_runtime.active_skills()}
+        skills = tuple(
+            SkillSnapshot(
+                skill.metadata.name,
+                skill.metadata.description,
+                skill.source.value,
+                skill.metadata.name in active,
+            )
+            for skill in self.app.skill_runtime.catalog.effective()
+        )
+        diagnostics = tuple(
+            f"{item.path}: {item.message}"
+            for item in self.app.skill_runtime.catalog.diagnostics()
+        )
+        return SkillsSnapshot(skills, diagnostics)
+
+    async def run_skill(self, name: str, argument: str) -> None:
+        notice = self.app.refresh_skills()
+        if notice is not None:
+            await self.show_message(notice)
+        skill = self.app.skill_runtime.catalog.get(name)
+        if skill is None:
+            await self.show_message(f"未找到 Skill: {name}")
+            return
+        try:
+            if skill.metadata.mode is SkillMode.INLINE:
+                self.app.skill_runtime.activate_inline(name, argument)
+                await self.app.start_user_turn(argument)
+                return
+            await self.app.start_fork_skill(
+                self.app.skill_runtime.prepare_fork(name, argument)
+            )
+        except SkillError as exc:
+            await self.show_message(f"Skill 执行失败: {exc}")

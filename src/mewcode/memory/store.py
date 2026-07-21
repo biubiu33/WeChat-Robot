@@ -20,6 +20,10 @@ _TYPE_LEVEL: dict[str, str] = {
 }
 _FILENAME_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*\.md$")
 _INDEX_FILENAME_RE = re.compile(r"<!--\s*([a-z0-9]+(?:_[a-z0-9]+)*\.md)\s*-->")
+_INDEX_LINE_RE = re.compile(
+    r"^- \[(user|feedback|project|reference)\] .+ <!-- "
+    r"([a-z0-9]+(?:_[a-z0-9]+)*\.md) -->$"
+)
 MAX_INDEX_LINES = 200
 MAX_INDEX_BYTES = 25 * 1024
 
@@ -40,6 +44,7 @@ class MemoryStore:
         self._project_dir = self._root / ".mewcode" / "memory"
         self._user_dir = (Path.home() if home is None else home) / ".mewcode" / "memory"
         self._lock = asyncio.Lock()
+        self._repair_empty_indexes()
 
     def prompt_index(self) -> str:
         return _truncate(
@@ -75,7 +80,7 @@ class MemoryStore:
                 self._apply_one(operation)
             if indexes:
                 for level, content in indexes.items():
-                    if level in {"user", "project"}:
+                    if level in {"user", "project"} and _valid_index(level, content):
                         self._write_index(level, _truncate(content))
 
     def _apply_one(self, operation: NoteOperation) -> None:
@@ -117,11 +122,45 @@ class MemoryStore:
     ) -> None:
         marker = f"<!-- {filename} -->"
         lines = [
-            line for line in self._read_index(level).splitlines() if marker not in line
+            line
+            for line in self._read_index(level).splitlines()
+            if marker not in line and _valid_index_line(level, line)
         ]
-        description = " ".join(content.split())[:160]
-        lines.append(f"- [{note_type}] {title} — {description} {marker}")
+        lines.append(_index_line(note_type, title, content, filename))
         self._write_index(level, "\n".join(lines) + "\n")
+
+    def _repair_empty_indexes(self) -> None:
+        for level in ("project", "user"):
+            if any(
+                _valid_index_line(level, line)
+                for line in self._read_index(level).splitlines()
+            ):
+                continue
+            lines = self._rebuild_index(level)
+            if lines:
+                try:
+                    self._write_index(level, "\n".join(lines) + "\n")
+                except OSError:
+                    continue
+
+    def _rebuild_index(self, level: str) -> list[str]:
+        directory = self._directory(level)
+        if not directory.is_dir():
+            return []
+        lines: list[str] = []
+        for path in sorted(directory.glob("*.md")):
+            if path.name == "MEMORY.md" or not _FILENAME_RE.fullmatch(path.name):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            note_type = _frontmatter_value(text, "type")
+            title = _frontmatter_value(text, "title")
+            if _TYPE_LEVEL.get(note_type) != level or not title:
+                continue
+            lines.append(_index_line(note_type, title, _note_body(text), path.name))
+        return lines
 
     def _read_index(self, level: str) -> str:
         try:
@@ -151,6 +190,26 @@ def _exceeds(content: str) -> bool:
         len(content.splitlines()) > MAX_INDEX_LINES
         or len(content.encode("utf-8")) > MAX_INDEX_BYTES
     )
+
+
+def _valid_index(level: str, content: str) -> bool:
+    lines = [line for line in content.splitlines() if line.strip()]
+    return bool(lines) and all(_valid_index_line(level, line) for line in lines)
+
+
+def _valid_index_line(level: str, line: str) -> bool:
+    match = _INDEX_LINE_RE.fullmatch(line)
+    return match is not None and _TYPE_LEVEL[match.group(1)] == level
+
+
+def _index_line(note_type: str, title: str, content: str, filename: str) -> str:
+    description = " ".join(content.split())[:160]
+    return f"- [{note_type}] {title} — {description} <!-- {filename} -->"
+
+
+def _note_body(text: str) -> str:
+    parts = text.split("---", 2)
+    return parts[2].strip() if len(parts) == 3 else ""
 
 
 def _truncate(content: str) -> str:

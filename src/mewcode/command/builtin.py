@@ -122,8 +122,43 @@ async def _clear(context: CommandContext, _: str) -> None:
     await context.control.clear_session()
 
 
-async def _review(context: CommandContext, _: str) -> None:
-    await context.control.send_user_message(REVIEW_PROMPT)
+async def _skill(context: CommandContext, _: str) -> None:
+    snapshot = context.control.skills_snapshot()
+    if not snapshot.skills:
+        await context.control.show_message("没有可用 Skill")
+        return
+    lines = [
+        f"/{skill.name}  {skill.description} [{skill.source}]"
+        + (" [已激活]" if skill.active else "")
+        for skill in snapshot.skills
+    ]
+    if snapshot.diagnostics:
+        lines.append("诊断:")
+        lines.extend(f"- {item}" for item in snapshot.diagnostics)
+    await context.control.show_message("\n".join(lines))
+
+
+def new_skill_commands(skills: tuple[tuple[str, str], ...]) -> tuple[Command, ...]:
+    commands: list[Command] = []
+    for name, description in skills:
+
+        async def handler(
+            context: CommandContext, argument: str, *, skill_name=name
+        ) -> None:
+            await context.control.run_skill(skill_name, argument)
+
+        commands.append(
+            Command(
+                name,
+                (),
+                description,
+                f"/{name} [参数]",
+                CommandKind.UI,
+                handler,
+                argument_hint="[参数]",
+            )
+        )
+    return tuple(commands)
 
 
 def new_default_command_registry() -> CommandRegistry:
@@ -219,12 +254,12 @@ def new_default_command_registry() -> CommandRegistry:
             _session,
         ),
         Command(
-            "review",
+            "skill",
             (),
-            "请求 AI 审查当前代码变更",
-            "/review",
-            CommandKind.PROMPT,
-            _review,
+            "列出可用和已激活的 Skill",
+            "/skill",
+            CommandKind.LOCAL,
+            _skill,
         ),
     )
     for command in commands:

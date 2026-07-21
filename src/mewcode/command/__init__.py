@@ -1,4 +1,4 @@
-from .builtin import REVIEW_PROMPT, new_default_command_registry
+from .builtin import REVIEW_PROMPT, new_default_command_registry, new_skill_commands
 from .dispatcher import CommandDispatcher, parse_input
 from .model import (
     Command,
@@ -10,6 +10,8 @@ from .model import (
     MemorySnapshot,
     ParsedInput,
     SessionSnapshot,
+    SkillSnapshot,
+    SkillsSnapshot,
     StatusSnapshot,
 )
 from .registry import CommandConflictError, CommandRegistry
@@ -28,7 +30,10 @@ __all__ = [
     "MemorySnapshot",
     "ParsedInput",
     "SessionSnapshot",
+    "SkillSnapshot",
+    "SkillsSnapshot",
     "StatusSnapshot",
     "new_default_command_registry",
+    "new_skill_commands",
     "parse_input",
 ]

@@ -29,30 +29,47 @@ class MemoryManager:
         self, turn_messages: list[Message], provider: Provider
     ) -> None:
         try:
+            rewrite_indexes = self._store.index_exceeds_limit()
             text = await generate_text(
                 provider,
                 system=MEMORY_SYSTEM,
-                prompt=_update_prompt(turn_messages, self._store.prompt_index()),
+                prompt=_update_prompt(
+                    turn_messages,
+                    self._store.prompt_index(),
+                    rewrite_indexes=rewrite_indexes,
+                ),
             )
             operations, indexes = _parse_update(text)
-            await self._store.apply(operations, indexes)
+            await self._store.apply(operations, indexes if rewrite_indexes else None)
         except Exception as exc:
             redact = getattr(provider, "redact", None)
             message = redact(str(exc)) if callable(redact) else str(exc)
             print(f"[memory] warn: update skipped: {message}", file=sys.stderr)
 
 
-def _update_prompt(messages: list[Message], index: str) -> str:
+def _update_prompt(
+    messages: list[Message], index: str, *, rewrite_indexes: bool
+) -> str:
     transcript = "\n".join(
         f"[{message.role}] {message.content}" for message in messages
     )
-    return (
-        "根据本轮对话提取值得长期记住的信息。仅返回 JSON 对象："
+    schema = (
         '{"operations":[{"action":"create|update","level":"user|project",'
         '"type":"user|feedback|project|reference","title":"...",'
-        '"filename":"lowercase_slug.md","content":"..."}],'
-        '"indexes":{"user":"...","project":"..."}}。'
-        '没有更新时返回 {"operations":[]}。不要删除笔记。\n'
+        '"filename":"lowercase_slug.md","content":"..."}]'
+    )
+    index_instruction = ""
+    if rewrite_indexes:
+        schema += ',"indexes":{"user":"...","project":"..."}'
+        index_instruction = (
+            "索引必须是非空 Markdown 列表，每行格式为 "
+            "- [type] 标题 — 简述 <!-- filename.md -->。"
+        )
+    schema += "}"
+    return (
+        "根据本轮对话提取值得长期记住的信息。仅返回 JSON 对象："
+        f'{schema}。没有更新时返回 {{"operations":[]}}。不要删除笔记。'
+        f"{index_instruction}\n"
         f"现有索引：\n{index}\n本轮：\n{transcript}"
     )
 

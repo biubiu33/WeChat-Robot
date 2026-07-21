@@ -41,6 +41,27 @@ def test_memory_update_writes_note_without_tools(tmp_path: Path) -> None:
     ).exists()
 
 
+def test_memory_update_keeps_generated_index_when_llm_returns_bad_index(
+    tmp_path: Path,
+) -> None:
+    provider = ProviderStub(
+        '{"operations":[{"action":"create","level":"project",'
+        '"type":"project","title":"技术栈","filename":"project_stack.md",'
+        '"content":"使用 FastAPI 和 PostgreSQL。"}],'
+        '"indexes":{"project":"猫屿计划","user":""}}'
+    )
+    manager = MemoryManager(tmp_path / "project", tmp_path / "home")
+
+    asyncio.run(manager.update_after_turn([], provider))
+
+    index = (tmp_path / "project" / ".mewcode" / "memory" / "MEMORY.md").read_text(
+        encoding="utf-8"
+    )
+    assert "- [project] 技术栈" in index
+    assert "<!-- project_stack.md -->" in index
+    assert "猫屿计划" not in index
+
+
 def test_memory_update_swallows_invalid_json(tmp_path: Path) -> None:
     manager = MemoryManager(tmp_path / "project", tmp_path / "home")
     asyncio.run(manager.update_after_turn([], ProviderStub("not json")))

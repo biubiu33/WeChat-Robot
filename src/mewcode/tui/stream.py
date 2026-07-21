@@ -34,7 +34,16 @@ async def consume_stream(app: MewCodeApp) -> None:
             app.engine,
             context=app.runtime.context if app.runtime is not None else None,
             prompt_supplier=(
-                lambda: (app.instructions.content, app.memory_manager.prompt_index())
+                lambda: (
+                    app.instructions.content,
+                    app.memory_manager.prompt_index(),
+                    app.skill_runtime.available_prompt(),
+                )
+            ),
+            environment_supplier=app.skill_environment,
+            tool_policy_supplier=app.skill_runtime.ordinary_allowed_tools,
+            provider_supplier=lambda: app.provider_for_skill(
+                app.skill_runtime.requested_model()
             ),
         )
         cancel = app.turn_cancel if app.turn_cancel is not None else asyncio.Event()

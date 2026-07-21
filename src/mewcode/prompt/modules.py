@@ -80,10 +80,13 @@ def fixed_modules() -> list[Module]:
     ]
 
 
-def optional_modules(instructions: str = "", memory: str = "") -> list[Module]:
+def optional_modules(
+    instructions: str = "", memory: str = "", skills: str = ""
+) -> list[Module]:
     """预留后续章节填充的可选模块。"""
     return [
         Module(name="自定义指令", priority=80, content=instructions),
-        Module(name="已激活 Skill", priority=90, content=""),
+        Module(name="可用 Skill", priority=90, content=skills),
+        Module(name="已激活 Skill", priority=95, content=""),
         Module(name="长期记忆", priority=100, content=memory),
     ]

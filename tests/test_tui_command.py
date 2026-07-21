@@ -10,7 +10,6 @@ from typing import Any, TypeVar
 
 from rich.console import Console
 
-from mewcode.command import REVIEW_PROMPT
 from mewcode.config import ProviderConfig
 from mewcode.llm import Message, Request, StreamEvent, Usage
 from mewcode.memory import MemoryManager
@@ -19,6 +18,7 @@ from mewcode.prompt import EXECUTE_DIRECTIVE
 from mewcode.session.archive import ArchiveWriter
 from mewcode.session.paths import paths_for
 from mewcode.session.repository import SessionRepository
+from mewcode.skill import SkillCatalog, SkillRuntime
 from mewcode.tool import new_default_registry
 from mewcode.tui.app import MewCodeApp, SessionState
 from mewcode.tui.completion import CommandCompletionMenu
@@ -73,6 +73,51 @@ def app_for(
     app.memory_enabled = False
     app.session_enabled = False
     return app, provider
+
+
+def write_skill(
+    root: Path,
+    name: str,
+    *,
+    mode: str = "inline",
+    body: str = "执行 SOP：{{args}}",
+) -> None:
+    path = root / ".mewcode" / "skills" / f"{name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        f"name: {name}\n"
+        f"description: {name} skill\n"
+        "allowed_tools: [read_file]\n"
+        f"mode: {mode}\n"
+        "fork_history: none\n"
+        "---\n"
+        f"{body}\n",
+        encoding="utf-8",
+    )
+
+
+def app_for_skills(root: Path) -> tuple[MewCodeApp, FakeProvider]:
+    registry = new_default_registry()
+    runtime = SkillRuntime(
+        SkillCatalog.load(
+            root,
+            root / "user-skills",
+            root / "builtin-skills",
+        ),
+        registry.ordinary_names(),
+    )
+    app = MewCodeApp(
+        [config()],
+        registry=registry,
+        root=root,
+        memory_manager=MemoryManager(root, root / "home"),
+        session_repository=SessionRepository(root),
+        skill_runtime=runtime,
+    )
+    app.memory_enabled = False
+    app.session_enabled = False
+    return app, FakeProvider()
 
 
 async def submit(app: MewCodeApp, text: str) -> None:
@@ -164,7 +209,9 @@ async def test_plan_do_and_review_share_normal_turn_path(tmp_path: Path) -> None
     assert app.mode is Mode.DEFAULT
     assert len(provider.requests) == 2
     assert provider.requests[0].messages[0].content == EXECUTE_DIRECTIVE
-    assert provider.requests[1].messages[-1].content == REVIEW_PROMPT
+    assert provider.requests[1].messages[-1].content == ""
+    assert "审查当前工作区" in provider.requests[1].system.environment
+    assert "按严重程度报告可操作的问题" not in provider.requests[1].system.stable
     assert app.session_stats.turns == 2
     assert app.session_stats.input_tokens == 20
     assert app.session_stats.output_tokens == 10
@@ -172,7 +219,7 @@ async def test_plan_do_and_review_share_normal_turn_path(tmp_path: Path) -> None
     archive = app.runtime.paths.archive_path.read_text(encoding="utf-8")
     assert '"content":"/do"' not in archive
     assert '"content":"/review"' not in archive
-    assert EXECUTE_DIRECTIVE in archive and REVIEW_PROMPT in archive
+    assert EXECUTE_DIRECTIVE in archive
 
 
 @async_test
@@ -195,10 +242,77 @@ async def test_status_uses_mode_specific_tool_count_and_memory_count(
         await submit(app, "/status")
         plan_status = last_command_output(app)
 
-    assert "可用工具数量: 6" in default_status
-    assert "可用工具数量: 3" in plan_status
+    assert "可用工具数量: 8" in default_status
+    assert "可用工具数量: 4" in plan_status
     assert "已加载记忆条目数: 2" in plan_status
     assert provider.requests == []
+
+
+@async_test
+async def test_inline_skill_is_loaded_on_demand_and_cleared_with_session(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    write_skill(root, "review", body="完整内联 SOP：{{args}}")
+    app, provider = app_for_skills(root)
+
+    async with app.run_test():
+        app.provider = provider
+        await submit(app, "/skill")
+        listing = last_command_output(app)
+        assert "/review" in listing
+        assert "完整内联 SOP" not in listing
+
+        await submit(app, "/review API")
+        await wait_until_idle(app)
+        request = provider.requests[0]
+        assert "完整内联 SOP：API" in request.system.environment
+        assert "完整内联 SOP" not in request.system.stable
+        assert [tool.name for tool in request.tools] == [
+            "read_file",
+            "load_skill",
+            "install_skill",
+        ]
+        assert [skill.name for skill in app.skill_runtime.active_skills()] == ["review"]
+
+        await submit(app, "/clear")
+        assert app.skill_runtime.active_skills() == ()
+
+    assert provider.requests[0].messages[-1].content == "API"
+
+
+@async_test
+async def test_fork_skill_receives_only_its_argument_and_returns_a_summary(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    write_skill(root, "test", mode="fork", body="隔离 SOP：{{args}}")
+    app, provider = app_for_skills(root)
+
+    async with app.run_test():
+        app.provider = provider
+        await submit(app, "/test unit target")
+        await wait_until_idle(app)
+
+    assert len(provider.requests) == 2
+    fork_request = provider.requests[0]
+    assert [message.content for message in fork_request.messages] == ["unit target"]
+    assert "隔离 SOP：unit target" in fork_request.system.environment
+    assert [message.role for message in app.conv.messages()] == ["user", "assistant"]
+    assert app.conv.messages()[0].content == "执行 Skill test: unit target"
+    assert app.conv.messages()[1].content == "回复 2"
+    assert "/test" not in app.runtime.paths.archive_path.read_text(encoding="utf-8")
+
+
+def test_skill_hot_refresh_replaces_dynamic_command_set(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    write_skill(root, "review")
+    app, _ = app_for_skills(root)
+
+    assert app.command_registry.resolve("review") is not None
+    write_skill(root, "custom")
+    assert app.refresh_skills() is None
+    assert app.command_registry.resolve("custom") is not None
 
 
 @async_test
@@ -295,7 +409,7 @@ async def test_inline_completion_menu_opens_and_filters_in_place(
         assert [command.name for command in menu.commands] == sorted(
             command.name for command in app.command_registry.public_commands()
         )
-        assert len(menu.commands) == 12
+        assert len(menu.commands) == 15
         assert menu.highlighted == 0
         assert input_area.has_focus
         child_ids = [child.id for child in main.children]
@@ -311,7 +425,11 @@ async def test_inline_completion_menu_opens_and_filters_in_place(
 
         input_area.text = "/c"
         await pilot.pause()
-        assert [command.name for command in menu.commands] == ["clear", "compact"]
+        assert [command.name for command in menu.commands] == [
+            "clear",
+            "commit",
+            "compact",
+        ]
         assert menu.highlighted == 0
 
         input_area.text = "/zzz"
@@ -355,7 +473,7 @@ async def test_completion_keyboard_selection_requires_second_enter(
         await pilot.pause()
         timeline_count = len(list(app.query(".timeline-entry")))
 
-        await pilot.press("down", "enter")
+        await pilot.press("down", "down", "enter")
         await pilot.pause()
         assert input_area.text == "/compact"
         assert not menu.display
@@ -433,7 +551,7 @@ async def test_completion_escape_suppresses_until_edit_and_alias_still_executes(
         assert input_area.text == "/c"
         assert not menu.display
 
-        input_area.text = "/co"
+        input_area.text = "/comp"
         await pilot.pause()
         assert [command.name for command in menu.commands] == ["compact"]
 
