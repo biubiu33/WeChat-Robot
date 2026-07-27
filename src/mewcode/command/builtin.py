@@ -138,6 +138,34 @@ async def _skill(context: CommandContext, _: str) -> None:
     await context.control.show_message("\n".join(lines))
 
 
+async def _hooks(context: CommandContext, _: str) -> None:
+    snapshot = context.control.hooks_snapshot()
+    if not snapshot.entries:
+        await context.control.show_message("No hooks loaded.")
+        return
+    grouped: dict[object, list[object]] = {}
+    for entry in snapshot.entries:
+        grouped.setdefault(entry.event, []).append(entry)
+    lines: list[str] = []
+    for event, entries in grouped.items():
+        lines.append(f"{event.value}:")
+        for entry in entries:
+            flags = " ".join(
+                flag
+                for enabled, flag in (
+                    (entry.only_once, "[once]"),
+                    (entry.asynchronous, "[async]"),
+                )
+                if enabled
+            )
+            lines.append(
+                f"  {entry.name}  {entry.event.value}  {entry.action_type}"
+                + (f"  {flags}" if flags else "")
+            )
+    lines.append("Loaded from: " + ", ".join(map(str, snapshot.sources)))
+    await context.control.show_message("\n".join(lines))
+
+
 def new_skill_commands(skills: tuple[tuple[str, str], ...]) -> tuple[Command, ...]:
     commands: list[Command] = []
     for name, description in skills:
@@ -260,6 +288,14 @@ def new_default_command_registry() -> CommandRegistry:
             "/skill",
             CommandKind.LOCAL,
             _skill,
+        ),
+        Command(
+            "hooks",
+            (),
+            "列出已加载的 Hook",
+            "/hooks",
+            CommandKind.LOCAL,
+            _hooks,
         ),
     )
     for command in commands:

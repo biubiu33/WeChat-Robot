@@ -5,6 +5,7 @@ import asyncio
 from mewcode.context.controller import ContextController
 from mewcode.conversation import Conversation
 from mewcode.context.artifact import ToolArtifactStore
+from mewcode.hook import HookEvent
 from mewcode.llm import Message, StreamEvent, ToolResult
 from mewcode.session.archive import ArchiveWriter, read_events
 
@@ -88,3 +89,52 @@ def test_request_budget_counts_dynamic_environment_text(tmp_path: Path) -> None:
     writer.close()
 
     assert with_skill - base == len("完整 Skill SOP\n\n")
+
+
+def test_compaction_emits_emergency_hook_payloads(tmp_path: Path) -> None:
+    class ProviderStub:
+        def redact(self, text: str) -> str:
+            return text
+
+        def stream(self, request):
+            async def events():
+                yield StreamEvent(
+                    text="\n".join(
+                        f"## {heading}"
+                        for heading in (
+                            "主要请求和意图",
+                            "关键技术概念",
+                            "文件和代码段",
+                            "错误和修复",
+                            "问题解决过程",
+                            "所有用户消息",
+                            "待办任务",
+                            "当前工作",
+                            "可能的下一步",
+                        )
+                    )
+                )
+
+            return events()
+
+    seen: list[tuple[HookEvent, dict[str, object]]] = []
+
+    async def dispatch(event: HookEvent, fields: dict[str, object]) -> None:
+        seen.append((event, fields))
+
+    writer = ArchiveWriter(tmp_path / "session.jsonl")
+    conv = Conversation()
+    for index in range(6):
+        conv.add_user(f"消息 {index}: " + "x" * 8_000)
+    controller = ContextController(
+        ProviderStub(), writer, tmp_path / "cache", 1, hook_dispatcher=dispatch
+    )
+
+    notices = asyncio.run(controller.prepare_request(conv, "系统", []))
+    writer.close()
+
+    assert notices == ["已压缩早期上下文"]
+    assert seen[0] == (HookEvent.PRE_COMPACT, {"trigger": "emergency"})
+    assert seen[1][0] is HookEvent.POST_COMPACT
+    assert seen[1][1]["trigger"] == "emergency"
+    assert {"before_tokens", "after_tokens"} <= set(seen[1][1])

@@ -30,6 +30,7 @@ from mewcode.command import (
 )
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
+from mewcode.hook import HookContext, HookDispatch, HookEngine, HookEvent
 from mewcode.llm import Provider, new_provider
 from mewcode.memory import InstructionBundle, MemoryManager
 from mewcode.permission import Engine, Mode, Outcome, new_engine
@@ -247,6 +248,7 @@ class MewCodeApp(App):
         memory_manager: MemoryManager | None = None,
         session_repository: SessionRepository | None = None,
         skill_runtime: SkillRuntime | None = None,
+        hook_engine: HookEngine | None = None,
     ) -> None:
         super().__init__()
         self.providers = providers
@@ -254,6 +256,7 @@ class MewCodeApp(App):
         self.registry = registry if registry is not None else new_default_registry()
         self.root = (Path.cwd() if root is None else root).resolve()
         self.engine = engine if engine is not None else new_engine(os.getcwd())[0]
+        self.hook_engine = hook_engine if hook_engine is not None else HookEngine()
         self.skill_runtime = skill_runtime or SkillRuntime(
             SkillCatalog.load(self.root), self.registry.ordinary_names()
         )
@@ -514,7 +517,18 @@ class MewCodeApp(App):
             return
         if self.provider is None:
             return
-        self._ensure_runtime()
+        created = self._ensure_runtime()
+        if created:
+            await self.dispatch_hook(HookEvent.SESSION_START, {})
+        dispatch = await self.dispatch_hook(
+            HookEvent.USER_PROMPT_SUBMIT, {"prompt": text}
+        )
+        if dispatch.blocked:
+            await self.append_timeline(
+                notice_entry(f"[hook {dispatch.blocked_by}] {dispatch.reason}")
+            )
+            self.query_one("#input", TextArea).focus()
+            return
         self.conv.add_user(text)
         self.session_stats.turns += 1
         await self.append_timeline(user_entry(text))
@@ -537,7 +551,9 @@ class MewCodeApp(App):
     async def start_fork_skill(self, skill: ActiveSkill) -> None:
         if self.state is not SessionState.IDLE or self.provider is None:
             return
-        self._ensure_runtime()
+        created = self._ensure_runtime()
+        if created:
+            await self.dispatch_hook(HookEvent.SESSION_START, {})
         invocation = f"执行 Skill {skill.name}: {skill.argument}".rstrip()
         self.conv.add_user(invocation)
         self.session_stats.turns += 1
@@ -584,9 +600,9 @@ class MewCodeApp(App):
         self.conv = Conversation()
         self.session_stats = SessionStats()
 
-    def _ensure_runtime(self) -> None:
+    def _ensure_runtime(self) -> bool:
         if self.runtime is not None:
-            return
+            return False
         if self.provider is None or self.provider_config is None:
             raise RuntimeError("尚未选择 Provider")
         self.runtime = SessionRuntime.new(
@@ -595,7 +611,39 @@ class MewCodeApp(App):
             self.provider_config.context_window,
             enable_title=self.session_enabled,
         )
+        self.runtime.context.set_hook_dispatcher(self.dispatch_hook)
         self.conv = self.runtime.conversation
+        return True
+
+    def hook_context(self, event: HookEvent, fields: dict[str, object]) -> HookContext:
+        session_id = self.runtime.paths.session_id if self.runtime is not None else ""
+        return HookContext(
+            event,
+            {
+                "event": event.value,
+                "session_id": session_id,
+                "cwd": str(self.root),
+                "mode": str(self.mode),
+                **fields,
+            },
+        )
+
+    async def dispatch_hook(
+        self, event: HookEvent, fields: dict[str, object]
+    ) -> HookDispatch:
+        if self.runtime is None:
+            return HookDispatch()
+        return await self.hook_engine.dispatch(
+            event, self.hook_context(event, fields), self.runtime.hook_state
+        )
+
+    async def _close_runtime(self) -> None:
+        if self.runtime is None:
+            return
+        await self.dispatch_hook(HookEvent.SESSION_END, {})
+        await self.hook_engine.close_session(self.runtime.hook_state)
+        self.runtime.close()
+        self.runtime = None
 
     @property
     def usage_in(self) -> int:
@@ -686,6 +734,7 @@ class MewCodeApp(App):
                 stale=False,
                 enable_title=self.session_enabled,
             )
+            self.runtime.context.set_hook_dispatcher(self.dispatch_hook)
             self.conv = self.runtime.conversation
             self.session_stats = archive.stats
         return False
@@ -705,7 +754,7 @@ class MewCodeApp(App):
                 and datetime.now() - archive.last_active > timedelta(days=7)
             )
             if self.runtime is not None:
-                self.runtime.close()
+                await self._close_runtime()
             self.runtime = SessionRuntime.restore(
                 self.root,
                 session_id,
@@ -715,6 +764,7 @@ class MewCodeApp(App):
                 stale=stale,
                 enable_title=self.session_enabled,
             )
+            self.runtime.context.set_hook_dispatcher(self.dispatch_hook)
             self.conv = self.runtime.conversation
             self.session_stats = archive.stats
             await self._replay(archive.visible_events)
@@ -723,6 +773,7 @@ class MewCodeApp(App):
                     f"已恢复会话 {session_id}，共 {len(archive.messages)} 条消息"
                 )
             )
+            await self.dispatch_hook(HookEvent.SESSION_RESUME, {})
         finally:
             self.state = SessionState.IDLE
             self.refresh_status()
@@ -788,7 +839,7 @@ class MewCodeApp(App):
         if self._stream_task is not None:
             self._stream_task.cancel()
         if self.runtime is not None:
-            self.runtime.close()
+            await self._close_runtime()
         self.skill_runtime.clear()
         self.exit()
 
@@ -800,7 +851,7 @@ class MewCodeApp(App):
         ):
             self.action_cancel_turn()
             return
-        self.exit()
+        asyncio.create_task(self.action_quit())
 
     def action_cancel_turn(self) -> None:
         if self.state is SessionState.APPROVING and self.pending is not None:

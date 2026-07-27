@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 
 from mewcode.context import ContextController
+from mewcode.hook import HookSessionState
 from mewcode.conversation import Conversation
 from mewcode.llm import Provider
 from mewcode.llm.generation import generate_text
@@ -31,6 +32,7 @@ class SessionRuntime:
             provider, self.writer, paths.cache_dir, context_window
         )
         self.conversation = Conversation(on_append=self._append)
+        self.hook_state = HookSessionState()
         self._title_task: asyncio.Task[None] | None = None
         self._title_started = False
         self._enable_title = enable_title

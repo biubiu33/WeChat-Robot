@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from mewcode import __version__
 from mewcode.conversation import Conversation
 from mewcode.context import ContextController
+from mewcode.hook import (
+    HookContext,
+    HookDispatch,
+    HookEngine,
+    HookEvent,
+    HookSessionState,
+)
 from mewcode.llm import (
     Provider,
     Request,
@@ -100,6 +109,10 @@ class Agent:
         environment_supplier: Callable[[str], str] | None = None,
         tool_policy_supplier: Callable[[], frozenset[str] | None] | None = None,
         provider_supplier: Callable[[], Provider] | None = None,
+        hook_engine: HookEngine | None = None,
+        hook_state: HookSessionState | None = None,
+        hook_context_supplier: Callable[[HookEvent, dict[str, Any]], HookContext]
+        | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -110,6 +123,9 @@ class Agent:
         self._environment_supplier = environment_supplier
         self._tool_policy_supplier = tool_policy_supplier
         self._provider_supplier = provider_supplier
+        self._hook_engine = hook_engine
+        self._hook_state = hook_state
+        self._hook_context_supplier = hook_context_supplier
 
     async def run(
         self,
@@ -144,6 +160,11 @@ class Agent:
                     conv, stable_system, definitions, environment_text
                 ):
                     yield Event(notice=notice)
+            await self._dispatch_hook(
+                HookEvent.PRE_USER_MESSAGE,
+                {"prompt": self._last_user_prompt(conv)},
+            )
+            reminder = self._with_hook_reminders(reminder)
             request = Request(
                 messages=conv.messages(),
                 tools=definitions,
@@ -168,6 +189,11 @@ class Agent:
                     self._finish_cancelled(conv)
                     yield Event(notice=NOTICE_CANCELLED)
                 else:
+                    if outcome.err is not None:
+                        await self._dispatch_hook(
+                            HookEvent.NOTIFICATION,
+                            {"kind": "stream_error", "detail": str(outcome.err)},
+                        )
                     self._ensure_assistant_tail(conv, NOTICE_STREAM_ERR)
                 return
 
@@ -196,6 +222,7 @@ class Agent:
                 if not outcome.text.strip():
                     yield Event(text=final_text)
                 conv.add_assistant(final_text)
+                await self._dispatch_hook(HookEvent.STOP, {"iter": iteration})
                 yield Event(done=True, natural=True)
                 return
 
@@ -225,11 +252,13 @@ class Agent:
             if unknown_run >= MAX_UNKNOWN_RUN:
                 yield Event(notice=NOTICE_UNKNOWN_TOOLS)
                 self._ensure_assistant_tail(conv, NOTICE_UNKNOWN_TOOLS)
+                await self._dispatch_hook(HookEvent.STOP, {"iter": iteration})
                 yield Event(done=True)
                 return
 
         yield Event(notice=NOTICE_MAX_ITER)
         self._ensure_assistant_tail(conv, NOTICE_MAX_ITER)
+        await self._dispatch_hook(HookEvent.STOP, {"iter": MAX_ITERATIONS})
         yield Event(done=True)
 
     async def _stream_once(
@@ -316,8 +345,11 @@ class Agent:
             if not self._tool_is_allowed(calls[index].name, allowed_tools):
                 call = calls[index]
                 yield Event(tool=self._tool_start(call))
-                result = self._tool_restricted_result(call)
+                result = await self._pre_tool_result(call)
+                if result is None:
+                    result = self._tool_restricted_result(call)
                 results[index] = result
+                await self._post_tool_hook(call, result)
                 yield Event(tool=self._tool_end(call, result))
                 index += 1
                 continue
@@ -325,8 +357,11 @@ class Agent:
             if read_only_only and not self._registry.is_read_only(calls[index].name):
                 call = calls[index]
                 yield Event(tool=self._tool_start(call))
-                result = self._plan_restricted_result(call)
+                result = await self._pre_tool_result(call)
+                if result is None:
+                    result = self._plan_restricted_result(call)
                 results[index] = result
+                await self._post_tool_hook(call, result)
                 yield Event(tool=self._tool_end(call, result))
                 index += 1
                 continue
@@ -334,10 +369,13 @@ class Agent:
             if self._registry.get(calls[index].name) is None:
                 call = calls[index]
                 yield Event(tool=self._tool_start(call))
-                result = self._permission_denied_result(
-                    call, f"未知工具 {call.name}，安全拒绝"
-                )
+                result = await self._pre_tool_result(call)
+                if result is None:
+                    result = self._permission_denied_result(
+                        call, f"未知工具 {call.name}，安全拒绝"
+                    )
                 results[index] = result
+                await self._post_tool_hook(call, result)
                 yield Event(tool=self._tool_end(call, result))
                 index += 1
                 continue
@@ -355,6 +393,10 @@ class Agent:
                 allowed: list[int] = []
                 for call_index in range(index, end):
                     call = calls[call_index]
+                    rejected = await self._pre_tool_result(call)
+                    if rejected is not None:
+                        results[call_index] = rejected
+                        continue
                     decision, reason = self._engine.check(mode, call, True)
                     if decision is Decision.ALLOW:
                         allowed.append(call_index)
@@ -370,9 +412,10 @@ class Agent:
                     calls, results, allowed, cancel, allowed_tools
                 )
                 for call_index in range(index, end):
-                    yield Event(
-                        tool=self._tool_end(calls[call_index], results[call_index])
-                    )
+                    result = results[call_index]
+                    assert result is not None
+                    await self._post_tool_hook(calls[call_index], result)
+                    yield Event(tool=self._tool_end(calls[call_index], result))
                 if not batch:
                     self._cancel_remaining(calls, results, end)
                     yield _ExecutionOutcome(self._finalize_results(results), False)
@@ -382,37 +425,47 @@ class Agent:
 
             call = calls[index]
             yield Event(tool=self._tool_start(call))
-            decision, reason = self._engine.check(mode, call, False)
-            if decision is Decision.ALLOW:
-                result, completed = await self._execute_one(call, cancel, allowed_tools)
-            elif decision is Decision.DENY:
-                result, completed = self._permission_denied_result(call, reason), True
+            rejected = await self._pre_tool_result(call)
+            if rejected is not None:
+                result, completed = rejected, True
             else:
-                outcome: Outcome | None = None
-                async for item in self._request_approval(call, reason, cancel):
-                    if isinstance(item, Event):
-                        yield item
-                    else:
-                        outcome = item
-                if outcome is None:
-                    result, completed = self._cancelled_result(call), False
-                elif outcome is Outcome.DENY_ONCE:
-                    result = self._permission_denied_result(
-                        call, "用户拒绝本次工具调用"
-                    )
-                    completed = True
-                else:
-                    if outcome is Outcome.ALLOW_SESSION:
-                        self._engine.allow_session(call)
-                    elif outcome is Outcome.ALLOW_FOREVER:
-                        try:
-                            self._engine.persist_local_allow(call)
-                        except Exception:
-                            pass
+                decision, reason = self._engine.check(mode, call, False)
+                if decision is Decision.ALLOW:
                     result, completed = await self._execute_one(
                         call, cancel, allowed_tools
                     )
+                elif decision is Decision.DENY:
+                    result, completed = (
+                        self._permission_denied_result(call, reason),
+                        True,
+                    )
+                else:
+                    outcome: Outcome | None = None
+                    async for item in self._request_approval(call, reason, cancel):
+                        if isinstance(item, Event):
+                            yield item
+                        else:
+                            outcome = item
+                    if outcome is None:
+                        result, completed = self._cancelled_result(call), False
+                    elif outcome is Outcome.DENY_ONCE:
+                        result = self._permission_denied_result(
+                            call, "用户拒绝本次工具调用"
+                        )
+                        completed = True
+                    else:
+                        if outcome is Outcome.ALLOW_SESSION:
+                            self._engine.allow_session(call)
+                        elif outcome is Outcome.ALLOW_FOREVER:
+                            try:
+                                self._engine.persist_local_allow(call)
+                            except Exception:
+                                pass
+                        result, completed = await self._execute_one(
+                            call, cancel, allowed_tools
+                        )
             results[index] = result
+            await self._post_tool_hook(call, result)
             yield Event(tool=self._tool_end(call, result))
             if not completed:
                 self._cancel_remaining(calls, results, index + 1)
@@ -455,6 +508,10 @@ class Agent:
         cancel: asyncio.Event,
     ) -> AsyncIterator[Event | Outcome | None]:
         future: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+        await self._dispatch_hook(
+            HookEvent.NOTIFICATION,
+            {"kind": "approval", "detail": call.name},
+        )
         yield Event(
             approval=ApprovalRequest(
                 name=call.name,
@@ -547,6 +604,60 @@ class Agent:
             return ""
         full = iteration == 1 or (iteration - 1) % PLAN_REMINDER_INTERVAL == 0
         return plan_reminder(full)
+
+    def _with_hook_reminders(self, reminder: str) -> str:
+        if self._hook_engine is None or self._hook_state is None:
+            return reminder
+        prompts = self._hook_engine.take_reminders(self._hook_state)
+        return "\n".join(item for item in (reminder, *prompts) if item)
+
+    async def _dispatch_hook(
+        self, event: HookEvent, payload: dict[str, Any]
+    ) -> HookDispatch:
+        if self._hook_engine is None or self._hook_state is None:
+            return HookDispatch()
+        context = (
+            self._hook_context_supplier(event, payload)
+            if self._hook_context_supplier is not None
+            else HookContext(event, {"event": event.value, **payload})
+        )
+        return await self._hook_engine.dispatch(event, context, self._hook_state)
+
+    async def _pre_tool_result(self, call: ToolCall) -> ToolResult | None:
+        dispatch = await self._dispatch_hook(
+            HookEvent.PRE_TOOL_USE,
+            {"tool_name": call.name, "tool_input": self._tool_input(call)},
+        )
+        if not dispatch.blocked:
+            return None
+        reason = f"[hook {dispatch.blocked_by}] {dispatch.reason}"
+        return self._to_tool_result(call, error_result("hook_rejected", reason))
+
+    async def _post_tool_hook(self, call: ToolCall, result: ToolResult) -> None:
+        await self._dispatch_hook(
+            HookEvent.POST_TOOL_USE,
+            {
+                "tool_name": call.name,
+                "tool_input": self._tool_input(call),
+                "tool_result": result.content,
+                "is_error": result.is_error,
+            },
+        )
+
+    @staticmethod
+    def _tool_input(call: ToolCall) -> dict[str, Any]:
+        try:
+            value = json.loads(call.input or "{}")
+        except ValueError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _last_user_prompt(conv: Conversation) -> str:
+        for message in reversed(conv.messages()):
+            if message.role == "user":
+                return message.content
+        return ""
 
     def _all_unknown(self, calls: list[ToolCall]) -> bool:
         return all(self._registry.get(call.name) is None for call in calls)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from mewcode.command import (
+    HookSnapshot,
     MemorySnapshot,
     SessionSnapshot,
     SkillSnapshot,
@@ -10,6 +11,7 @@ from mewcode.command import (
     StatusSnapshot,
 )
 from mewcode.permission import Mode
+from mewcode.hook import HookEvent
 from mewcode.session import SessionStats
 from mewcode.session.runtime import SessionRuntime
 from mewcode.skill import SkillError, SkillMode
@@ -42,7 +44,7 @@ class TuiCommandControl:
             await self.show_message("尚未选择 Provider")
             return
         if self.app.runtime is not None:
-            self.app.runtime.close()
+            await self.app._close_runtime()
         self.app.skill_runtime.clear()
         self.app.runtime = SessionRuntime.new(
             self.app.root,
@@ -50,7 +52,9 @@ class TuiCommandControl:
             self.app.provider_config.context_window,
             enable_title=self.app.session_enabled,
         )
+        self.app.runtime.context.set_hook_dispatcher(self.app.dispatch_hook)
         self.app.conv = self.app.runtime.conversation
+        await self.app.dispatch_hook(HookEvent.SESSION_START, {})
         self.app.session_stats = SessionStats()
         timeline = self.app.query_one("#timeline", Timeline)
         await timeline.clear()
@@ -113,6 +117,9 @@ class TuiCommandControl:
             for item in self.app.skill_runtime.catalog.diagnostics()
         )
         return SkillsSnapshot(skills, diagnostics)
+
+    def hooks_snapshot(self) -> HookSnapshot:
+        return self.app.hook_engine.snapshot()
 
     async def run_skill(self, name: str, argument: str) -> None:
         notice = self.app.refresh_skills()

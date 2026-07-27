@@ -409,7 +409,7 @@ async def test_inline_completion_menu_opens_and_filters_in_place(
         assert [command.name for command in menu.commands] == sorted(
             command.name for command in app.command_registry.public_commands()
         )
-        assert len(menu.commands) == 15
+        assert len(menu.commands) == 16
         assert menu.highlighted == 0
         assert input_area.has_focus
         child_ids = [child.id for child in main.children]
@@ -421,7 +421,7 @@ async def test_inline_completion_menu_opens_and_filters_in_place(
 
         input_area.text = "/h"
         await pilot.pause()
-        assert [command.name for command in menu.commands] == ["help"]
+        assert [command.name for command in menu.commands] == ["help", "hooks"]
 
         input_area.text = "/c"
         await pilot.pause()

@@ -36,3 +36,13 @@ class TokenEstimator:
     ) -> bool:
         reserve = MANUAL_RESERVE if manual else AUTO_RESERVE
         return self.estimate(request_chars) > context_window - reserve
+
+    def compression_trigger(
+        self, request_chars: int, context_window: int
+    ) -> str | None:
+        estimated = self.estimate(request_chars)
+        if estimated >= context_window:
+            return "emergency"
+        if estimated > context_window - AUTO_RESERVE:
+            return "auto"
+        return None

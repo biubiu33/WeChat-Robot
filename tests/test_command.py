@@ -24,6 +24,7 @@ from mewcode.command import (
 )
 from mewcode.permission import Mode
 from mewcode.prompt import EXECUTE_DIRECTIVE
+from mewcode.hook import HookEvent, HookSnapshot, HookSnapshotEntry
 
 
 class FakeControl:
@@ -46,6 +47,14 @@ class FakeControl:
         self.skills = SkillsSnapshot(
             (SkillSnapshot("review-skill", "审查代码", "user", True),),
             ("broken.md: YAML 错误",),
+        )
+        self.hooks = HookSnapshot(
+            (
+                HookSnapshotEntry(
+                    "format", HookEvent.POST_TOOL_USE, "shell", True, True
+                ),
+            ),
+            (Path("project/.mewcode/hooks.yaml"),),
         )
 
     async def show_message(self, text: str) -> None:
@@ -93,6 +102,9 @@ class FakeControl:
 
     def skills_snapshot(self) -> SkillsSnapshot:
         return self.skills
+
+    def hooks_snapshot(self) -> HookSnapshot:
+        return self.hooks
 
     async def run_skill(self, name: str, argument: str) -> None:
         self.events.append(("skill", (name, argument)))
@@ -190,7 +202,7 @@ def test_registry_completion_matches_alias_deduplicates_and_hides() -> None:
     registry = new_default_command_registry()
     registry.register(command("hidden-command", ("hc",), hidden=True))
 
-    assert [item.name for item in registry.completions("h")] == ["help"]
+    assert [item.name for item in registry.completions("h")] == ["help", "hooks"]
     assert [item.name for item in registry.completions("c")] == ["clear", "compact"]
     assert registry.completions("hc") == ()
     assert [item.name for item in registry.completions("")] == sorted(
@@ -252,6 +264,7 @@ def test_default_registry_has_exact_public_commands_aliases_and_types() -> None:
         "resume",
         "clear",
         "help",
+        "hooks",
         "status",
         "memory",
         "permission",
@@ -279,9 +292,22 @@ def test_local_help_lists_canonical_names_sorted_in_two_columns() -> None:
 
     names = [line.split()[0] for line in lines]
     assert names == sorted(names)
-    assert len(lines) == 12
+    assert len(lines) == 13
     assert "/h" not in names and "/c" not in names
     assert all("  " in line for line in lines)
+
+
+def test_hooks_command_reports_empty_and_loaded_snapshot() -> None:
+    empty = FakeControl()
+    empty.hooks = HookSnapshot()
+    dispatch("/hooks", empty)
+    loaded = dispatch("/hooks")
+
+    assert empty.events == [("show", "No hooks loaded.")]
+    output = str(loaded.events[0][1])
+    assert "PostToolUse:" in output
+    assert "format  PostToolUse  shell  [once] [async]" in output
+    assert "Loaded from: project\\.mewcode\\hooks.yaml" in output
 
 
 def test_local_help_resolves_alias_and_shows_all_metadata() -> None:

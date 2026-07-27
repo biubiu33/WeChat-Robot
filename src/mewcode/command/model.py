@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable, Protocol, TYPE_CHECKING
 
+from mewcode.hook import HookSnapshot
 from mewcode.permission import Mode
 
 if TYPE_CHECKING:
@@ -110,6 +111,8 @@ class CommandControl(Protocol):
     def session_snapshot(self) -> SessionSnapshot | None: ...
 
     def skills_snapshot(self) -> SkillsSnapshot: ...
+
+    def hooks_snapshot(self) -> HookSnapshot: ...
 
     async def run_skill(self, name: str, argument: str) -> None: ...
 

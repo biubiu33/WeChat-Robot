@@ -7,6 +7,7 @@ from pathlib import Path
 from mewcode import __version__
 from mewcode.command import new_default_command_registry
 from mewcode.config import ConfigError, discover_config_path, load
+from mewcode.hook import HookEngine
 from mewcode.mcp import load_config as load_mcp_config
 from mewcode.mcp import new_manager
 from mewcode.memory import InstructionLoader, MemoryManager
@@ -30,6 +31,7 @@ async def _run_app(providers: object, root: Path) -> None:
         engine, engine_error = new_engine(root)
         if engine_error is not None:
             print(f"权限引擎降级: {engine_error}", file=sys.stderr)
+        hook_engine = HookEngine.load(root)
 
         ensure_project_layout(root)
         instructions = InstructionLoader(root).load_once()
@@ -52,6 +54,7 @@ async def _run_app(providers: object, root: Path) -> None:
             memory_manager=memory_manager,
             session_repository=session_repository,
             skill_runtime=skill_runtime,
+            hook_engine=hook_engine,
         )
         await app.run_async()
         await asyncio.gather(cleanup_task, return_exceptions=True)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
@@ -23,6 +24,15 @@ from mewcode.agent import (
     Phase,
 )
 from mewcode.conversation import Conversation
+from mewcode.hook import (
+    Action,
+    Hook,
+    HookCatalog,
+    HookContext,
+    HookEngine,
+    HookEvent,
+    HookSessionState,
+)
 from mewcode.llm import Request, StreamEvent, ToolCall, Usage
 from mewcode.permission import Outcome, new_engine
 from mewcode.skill import LoadSkillTool, SkillCatalog, SkillRuntime
@@ -124,6 +134,19 @@ class RecordingTool:
 async def collect(agent: Agent, conv: Conversation, mode=Mode.BYPASS, cancel=None):
     cancel_event = cancel if cancel is not None else asyncio.Event()
     return [event async for event in agent.run(conv, mode, cancel_event)]
+
+
+def hook_context(event: HookEvent, fields: dict[str, object]) -> HookContext:
+    return HookContext(
+        event,
+        {
+            "event": event.value,
+            "session_id": "test-session",
+            "cwd": "test-cwd",
+            "mode": "bypassPermissions",
+            **fields,
+        },
+    )
 
 
 @async_test
@@ -393,6 +416,158 @@ async def test_stream_error_stops_and_preserves_assistant_tail() -> None:
     assert isinstance(next(event.err for event in events if event.err), RuntimeError)
     assert conv.last_role() == "assistant"
     assert "请求出错" in conv.messages()[-1].content
+
+
+@async_test
+async def test_hook_prompt_is_injected_for_current_pre_user_request() -> None:
+    provider = FakeProvider([[StreamEvent(text="完成"), StreamEvent(done=True)]])
+    state = HookSessionState()
+    hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "pre-send",
+                    HookEvent.PRE_USER_MESSAGE,
+                    None,
+                    Action("prompt", text="保持 zh-CN"),
+                ),
+            )
+        )
+    )
+    conv = Conversation()
+    conv.add_user("开始")
+
+    await collect(
+        Agent(
+            provider,
+            Registry(),
+            hook_engine=hooks,
+            hook_state=state,
+            hook_context_supplier=hook_context,
+        ),
+        conv,
+    )
+
+    assert provider.requests[0].reminder == "保持 zh-CN"
+    assert state.reminders == []
+    assert all("保持 zh-CN" not in message.content for message in conv.messages())
+
+
+@async_test
+async def test_hook_blocks_tool_before_permission_and_posts_result() -> None:
+    call = ToolCall("blocked", "write_file", '{"path":"blocked.py"}')
+    provider = FakeProvider(
+        [
+            [StreamEvent(tool_calls=[call]), StreamEvent(done=True)],
+            [StreamEvent(text="已调整"), StreamEvent(done=True)],
+        ]
+    )
+    log: list[str] = []
+    registry = Registry()
+    registry.register(RecordingTool("write_file", log))
+    command = (
+        f'"{sys.executable}" -c '
+        "\"import sys; print('policy denied', file=sys.stderr); raise SystemExit(2)\""
+    )
+    hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "block-write",
+                    HookEvent.PRE_TOOL_USE,
+                    None,
+                    Action("shell", command=command),
+                ),
+                Hook(
+                    "post-result",
+                    HookEvent.POST_TOOL_USE,
+                    None,
+                    Action("prompt", text="工具已被策略拒绝"),
+                ),
+            )
+        )
+    )
+    conv = Conversation()
+    conv.add_user("写文件")
+
+    await collect(
+        Agent(
+            provider,
+            registry,
+            hook_engine=hooks,
+            hook_state=HookSessionState(),
+            hook_context_supplier=hook_context,
+        ),
+        conv,
+    )
+
+    assert log == []
+    result = conv.messages()[2].tool_results[0]
+    assert result.is_error and "hook_rejected" in result.content
+    assert "[hook block-write] policy denied" in result.content
+    assert provider.requests[1].reminder == "工具已被策略拒绝"
+
+
+@async_test
+async def test_stop_and_stream_error_hooks_are_dispatched() -> None:
+    stop_state = HookSessionState()
+    stop_hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "on-stop",
+                    HookEvent.STOP,
+                    None,
+                    Action("prompt", text="已自然结束"),
+                ),
+            )
+        )
+    )
+    successful = FakeProvider([[StreamEvent(text="完成"), StreamEvent(done=True)]])
+    conversation = Conversation()
+    conversation.add_user("完成任务")
+
+    await collect(
+        Agent(
+            successful,
+            Registry(),
+            hook_engine=stop_hooks,
+            hook_state=stop_state,
+            hook_context_supplier=hook_context,
+        ),
+        conversation,
+    )
+
+    error_state = HookSessionState()
+    error_hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "on-stream-error",
+                    HookEvent.NOTIFICATION,
+                    None,
+                    Action("prompt", text="请求失败"),
+                ),
+            )
+        )
+    )
+    failing = FakeProvider([[StreamEvent(err=RuntimeError("network"))]])
+    conversation = Conversation()
+    conversation.add_user("失败任务")
+
+    await collect(
+        Agent(
+            failing,
+            Registry(),
+            hook_engine=error_hooks,
+            hook_state=error_state,
+            hook_context_supplier=hook_context,
+        ),
+        conversation,
+    )
+
+    assert stop_state.reminders == ["已自然结束"]
+    assert error_state.reminders == ["请求失败"]
 
 
 async def _next_approval(

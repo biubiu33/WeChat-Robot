@@ -18,7 +18,12 @@ from mewcode.permission import (
     persist_local_allow,
 )
 from mewcode.permission.blacklist import blacklist_match
-from mewcode.permission.rule import match_pattern, parse_rule
+from mewcode.permission.rule import (
+    Pattern,
+    match_pattern,
+    parse_rule,
+    parse_rule_detail,
+)
 
 
 def call(name: str, values: str) -> ToolCall:
@@ -116,6 +121,36 @@ def test_rule_parser_and_globs() -> None:
     assert not match_pattern("git *", "hg status", is_path=False)
     assert match_pattern("src/**", "src/mewcode/agent.py", is_path=True)
     assert not match_pattern("src/*", "src/mewcode/agent.py", is_path=True)
+
+
+@pytest.mark.parametrize(
+    ("rule_text", "target", "expected"),
+    [
+        ("Bash(=git status)", "git status", True),
+        ("Bash(=git status)", "git status -s", False),
+        ("Bash(~^npm (install|test)$)", "npm install", True),
+        ("Bash(~^npm (install|test)$)", "npm run dev", False),
+        ("Bash(!~^rm.*)", "ls -lh", True),
+        ("Bash(!~^rm.*)", "rm -rf .", False),
+    ],
+)
+def test_rule_parser_supports_explicit_patterns(
+    rule_text: str, target: str, expected: bool
+) -> None:
+    rule = parse_rule(rule_text, allow=True)
+
+    assert rule is not None
+    assert rule.pattern is not None
+    assert rule.pattern.matches(target, is_path=False) is expected
+
+
+def test_pattern_supports_nested_not_and_reports_invalid_regex() -> None:
+    pattern = Pattern("not", inner=Pattern("not", inner=Pattern("exact", "x")))
+    rule, reason = parse_rule_detail("Bash(~[)", allow=True)
+
+    assert pattern.matches("x", is_path=False)
+    assert rule is None
+    assert "正则无效" in reason
 
 
 def test_same_layer_deny_wins_over_allow() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 from mewcode.llm import ToolCall
 
 from . import Category
-from .rule import RuleSet, parse_rule
+from .rule import RuleSet, parse_rule_detail
 
 
 @dataclass
@@ -85,13 +86,17 @@ def save_settings(path: Path, settings: Settings) -> None:
 def to_rule_set(settings: Settings) -> RuleSet:
     rule_set = RuleSet()
     for text in settings.permissions.allow:
-        rule = parse_rule(text, allow=True)
+        rule, reason = parse_rule_detail(text, allow=True)
         if rule is not None:
             rule_set.allow.append(rule)
+        else:
+            print(f'[permission] rule "{text}" parse failed: {reason}', file=sys.stderr)
     for text in settings.permissions.deny:
-        rule = parse_rule(text, allow=False)
+        rule, reason = parse_rule_detail(text, allow=False)
         if rule is not None:
             rule_set.deny.append(rule)
+        else:
+            print(f'[permission] rule "{text}" parse failed: {reason}', file=sys.stderr)
     return rule_set
 
 

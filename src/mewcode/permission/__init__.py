@@ -61,7 +61,7 @@ def parse_mode(value: str) -> tuple[Mode, bool]:
 
 from .engine import Engine, check, mode_fallback, new_engine  # noqa: E402
 from .persist import allow_session, persist_local_allow  # noqa: E402
-from .rule import Rule, RuleSet  # noqa: E402
+from .rule import Pattern, Rule, RuleSet  # noqa: E402
 
 
 __all__ = [
@@ -70,6 +70,7 @@ __all__ = [
     "Engine",
     "Mode",
     "Outcome",
+    "Pattern",
     "Rule",
     "RuleSet",
     "allow_session",

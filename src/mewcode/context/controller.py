@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from mewcode.conversation import Conversation
+from mewcode.hook import HookEvent
 from mewcode.llm import Message, Provider, ToolDefinition
 from mewcode.session.archive import ArchiveWriter, CompactCheckpoint
 from mewcode.session.repository import RestoredArchive
@@ -15,6 +18,7 @@ from .compact import summarize
 
 
 BOUNDARY_NOTICE = "早期历史已压缩。需要文件细节时请重新读取文件，不要根据摘要臆测代码。"
+HookDispatcher = Callable[[HookEvent, dict[str, Any]], Awaitable[object]]
 
 
 class ContextController:
@@ -24,6 +28,7 @@ class ContextController:
         writer: ArchiveWriter,
         cache_dir: Path,
         context_window: int,
+        hook_dispatcher: HookDispatcher | None = None,
     ) -> None:
         self._provider = provider
         self._writer = writer
@@ -34,6 +39,10 @@ class ContextController:
         self._failure_count = 0
         self._circuit_open = False
         self._staleness = ""
+        self._hook_dispatcher = hook_dispatcher
+
+    def set_hook_dispatcher(self, dispatcher: HookDispatcher | None) -> None:
+        self._hook_dispatcher = dispatcher
 
     async def prepare_request(
         self,
@@ -51,12 +60,13 @@ class ContextController:
             notices.append("已将大型工具结果归档到会话缓存")
         if self._circuit_open:
             return notices
-        if self._estimator.exceeds(
-            self._request_chars(conv.messages(), stable, tools, environment),
-            self._context_window,
-        ):
+        request_chars = self._request_chars(conv.messages(), stable, tools, environment)
+        trigger = self._estimator.compression_trigger(
+            request_chars, self._context_window
+        )
+        if trigger is not None:
             try:
-                await self._compact(conv, stable, tools, environment, manual=False)
+                await self._compact(conv, stable, tools, environment, trigger=trigger)
                 notices.append("已压缩早期上下文")
             except Exception:
                 self._failure_count += 1
@@ -74,7 +84,9 @@ class ContextController:
         environment: str = "",
     ) -> str:
         try:
-            changed = await self._compact(conv, stable, tools, environment, manual=True)
+            changed = await self._compact(
+                conv, stable, tools, environment, trigger="manual"
+            )
         except Exception as exc:
             return f"上下文压缩失败: {self._provider.redact(str(exc))}"
         return "已压缩早期上下文" if changed else "当前上下文无需压缩"
@@ -138,26 +150,45 @@ class ContextController:
         tools: list[ToolDefinition],
         environment: str,
         *,
-        manual: bool,
+        trigger: str,
     ) -> bool:
         messages = conv.messages()
         if len(messages) <= 5:
             return False
-        if not manual and not self._estimator.exceeds(
-            self._request_chars(messages, stable, tools, environment),
-            self._context_window,
+        request_chars = self._request_chars(messages, stable, tools, environment)
+        if (
+            trigger != "manual"
+            and self._estimator.compression_trigger(request_chars, self._context_window)
+            is None
         ):
             return False
         retained = _retained_start(messages)
         if retained == 0:
             return False
+        before_tokens = self._estimator.estimate(request_chars)
+        await self._dispatch_hook(HookEvent.PRE_COMPACT, {"trigger": trigger})
         summary = await summarize(self._provider, messages[:retained])
         self._summary = summary
         self._failure_count = 0
         self._circuit_open = False
         conv.replace_messages(messages[retained:])
         self._writer.append_compact(CompactCheckpoint(summary, retained, retained))
+        after_tokens = self._estimator.estimate(
+            self._request_chars(conv.messages(), stable, tools, environment)
+        )
+        await self._dispatch_hook(
+            HookEvent.POST_COMPACT,
+            {
+                "trigger": trigger,
+                "before_tokens": before_tokens,
+                "after_tokens": after_tokens,
+            },
+        )
         return True
+
+    async def _dispatch_hook(self, event: HookEvent, payload: dict[str, Any]) -> None:
+        if self._hook_dispatcher is not None:
+            await self._hook_dispatcher(event, payload)
 
     def _request_chars(
         self,

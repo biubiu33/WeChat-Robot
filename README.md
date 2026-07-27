@@ -101,6 +101,73 @@ providers:
 
 MCP 配置示例见 [`.mewcode/mcp-servers.example.yaml`](.mewcode/mcp-servers.example.yaml)。复制为 `$HOME\.mewcode\mcp.yaml` 后，按需设置其中引用的环境变量。每个 Server 必须显式声明 `type: stdio` 或 `type: http`；`env` 和 `headers` 的值支持 `${VAR}` 展开。
 
+### Hook
+
+Hook 在 Agent 生命周期的固定时刻自动执行声明式动作。启动时依次读取并合并以下 UTF-8 YAML 文件；同一文件内按声明顺序执行，项目级规则在用户级规则之前：
+
+1. `<项目根目录>/.mewcode/hooks.yaml`
+2. `~/.mewcode/hooks.yaml`
+
+文件缺失不提示；YAML、字段或单条规则错误会写入 stderr 并跳过出错项，不会阻止启动。Hook 名称用于日志与 `only_once` 跟踪，必须全局唯一；后加载的同名规则会被跳过。配置在启动期加载，编辑后需重启。
+
+每条规则由 `event`、可选 `if` 和 `action` 组成。条件组只能选择 `all_of` 或 `any_of` 之一；`field` 使用点分路径，缺失值按空字符串匹配。`match` 与权限规则共用 `exact`、`glob`、`regex` 和递归 `not` 四种模式。
+
+```yaml
+hooks:
+  - name: block-lockfile-write
+    event: PreToolUse
+    if:
+      all_of:
+        - field: tool_name
+          match: {type: exact, value: write_file}
+        - field: tool_input.path
+          match: {type: regex, value: ".*package-lock\\.json"}
+    action:
+      type: shell
+      command: "echo package-lock.json 应由 npm install 生成 >&2; exit 2"
+
+  - name: format-python
+    event: PostToolUse
+    if:
+      all_of:
+        - field: tool_name
+          match: {type: exact, value: write_file}
+        - field: tool_input.path
+          match: {type: glob, value: "**/*.py"}
+    action:
+      type: shell
+      command: "python scripts/format_hook.py"
+    async: true
+    timeout: 5s
+
+  - name: reply-in-chinese
+    event: SessionStart
+    action:
+      type: prompt
+      text: "使用 zh-CN 回复。"
+
+  - name: notify-done
+    event: Stop
+    action:
+      type: http
+      url: http://127.0.0.1:9999/done
+      method: POST
+      body: '{"event":"{event}","session":"{session_id}"}'
+```
+
+支持的事件为 `SessionStart`、`SessionEnd`、`SessionResume`、`UserPromptSubmit`、`Stop`、`PreUserMessage`、`PreToolUse`、`PostToolUse`、`PreCompact`、`PostCompact` 和 `Notification`。所有事件都带有 `event`、`session_id`、`cwd`、`mode`；工具事件另带 `tool_name`、`tool_input`、`tool_result` 和 `is_error`，消息事件带 `prompt`，压缩事件带 `trigger` 和 Token 估算。
+
+动作类型与约束：
+
+- `shell.command` 通过 shell 执行，并从标准输入接收按键排序的单行事件 JSON；不支持 `$EVENT`、`$TOOL_ARGS.xxx` 等变量替换。
+- `prompt.text` 原样加入下一次模型请求的隐藏 reminder，排在计划模式 reminder 之后；不写入可见对话、JSONL、长期记忆或压缩历史。`PreUserMessage` 的提示会直接影响当前请求。
+- `http` 支持 `url`、可选 `method`、`headers` 和 `body`；缺省 body 为事件 JSON，显式 body 仅支持 `{field}` 的 `str.format_map` 插值。
+- `subagent` 需给出 `agent_name` 和 `prompt`，当前仅写固定的未实现日志，不启动子 Agent。
+
+`PreToolUse` 与 `UserPromptSubmit` 可拦截：同步 shell 以退出码 `2` 拦截并使用 stderr（或 stdout）作为原因；同步 HTTP 在 2xx 响应体为 `{"decision":"block","reason":"..."}` 时拦截。工具拦截会把 `[hook <name>] <reason>` 作为错误工具结果回灌模型，用户提交拦截则保留输入且不写入会话。其他 Hook 失败仅以 `[hook <name>] <event> failed: <reason>` 写 stderr 并放行。
+
+`only_once: true` 在当前会话首次匹配时预留，动作成功后才确认；失败会释放，以便后续事件重试。`async: true` 让 shell、HTTP 或 subagent 在后台运行；拦截事件和 `prompt + async` 都是加载错误。`timeout` 为 shell/HTTP 的最长时长，默认 `30s`。`only_once` 不跨进程持久化，Hook 没有显式优先级、热更新、依赖或重试。
+
 ## 使用
 
 ```powershell
@@ -133,6 +200,7 @@ python -m mewcode
 | `/permission` | 显示当前权限模式。 |
 | `/session` | 显示当前 session ID 与 JSONL 档案路径。 |
 | `/skill` | 列出当前可用与已激活的 Skill、来源和诊断摘要，不显示 SOP 正文。 |
+| `/hooks` | 按事件列出启动期加载的 Hook、动作、`[once]` / `[async]` 标记和配置来源；没有规则时显示 `No hooks loaded.`。 |
 | `/<name> [参数]` | 执行发现到的 Skill；内置 `/commit`、`/review`、`/test` 与第三方 Skill 使用同一入口。 |
 | Esc | 命令菜单展开时关闭菜单并保留输入；否则取消当前 Agent Loop。 |
 | 流式状态 Ctrl+C | 取消当前 Agent Loop，保留会话继续对话。 |

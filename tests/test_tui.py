@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
 from io import StringIO
@@ -10,8 +11,12 @@ from typing import Any, TypeVar
 from rich.console import Console
 from mewcode.config import ProviderConfig
 from mewcode.permission import Mode
+from mewcode.hook import Action, Hook, HookCatalog, HookEngine, HookEvent
+from mewcode.session.archive import ArchiveWriter
+from mewcode.session.paths import paths_for
+from mewcode.session.repository import SessionRepository
 from mewcode.skill import SkillCatalog, SkillRuntime
-from mewcode.llm import Request, StreamEvent, ToolCall, Usage
+from mewcode.llm import Message, Request, StreamEvent, ToolCall, Usage
 from mewcode.tool import Registry, Result, new_default_registry
 from mewcode.tui.app import MewCodeApp, SessionState
 from mewcode.tui.timeline import Timeline
@@ -133,6 +138,157 @@ async def test_tui_passes_tools_and_restores_input_for_multiple_turns() -> None:
         "user",
         "assistant",
     ]
+
+
+@async_test
+async def test_user_submit_hook_blocks_before_archiving_or_streaming(
+    tmp_path: Path,
+) -> None:
+    config = ProviderConfig(
+        name="fake", protocol="openai", api_key="test-key", model="fake-model"
+    )
+    command = (
+        f'"{sys.executable}" -c '
+        "\"import sys; print('敏感输入被拒绝', file=sys.stderr); raise SystemExit(2)\""
+    )
+    hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "reject-submit",
+                    HookEvent.USER_PROMPT_SUBMIT,
+                    None,
+                    Action("shell", command=command),
+                ),
+            )
+        )
+    )
+    app = MewCodeApp(
+        [config],
+        root=tmp_path,
+        registry=Registry(),
+        skill_runtime=empty_skill_runtime(tmp_path),
+        hook_engine=hooks,
+    )
+    provider = FakeProvider()
+
+    async with app.run_test():
+        app.provider = provider
+        input_area = app.query_one("#input")
+        input_area.text = "请删除文件"
+        await app.submit_current_input()
+
+        assert input_area.text == "请删除文件"
+        assert app.conv.messages() == []
+        assert app.session_stats.turns == 0
+        assert provider.requests == 0
+        assert app.state is SessionState.IDLE
+
+
+@async_test
+async def test_session_start_prompt_is_hidden_and_consumed_once(tmp_path: Path) -> None:
+    class ReminderProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reminders: list[str] = []
+
+        async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
+            self.requests += 1
+            self.reminders.append(req.reminder)
+            yield StreamEvent(text="完成")
+            yield StreamEvent(done=True)
+
+    config = ProviderConfig(
+        name="fake", protocol="openai", api_key="test-key", model="fake-model"
+    )
+    hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "session-hint",
+                    HookEvent.SESSION_START,
+                    None,
+                    Action("prompt", text="仅首轮提醒"),
+                ),
+            )
+        )
+    )
+    app = MewCodeApp(
+        [config],
+        root=tmp_path,
+        registry=Registry(),
+        skill_runtime=empty_skill_runtime(tmp_path),
+        hook_engine=hooks,
+    )
+    provider = ReminderProvider()
+
+    async with app.run_test():
+        app.provider = provider
+        input_area = app.query_one("#input")
+        input_area.text = "第一轮"
+        await app.submit_current_input()
+        await _wait_until_idle(app)
+        input_area.text = "第二轮"
+        await app.submit_current_input()
+        await _wait_until_idle(app)
+
+    assert provider.reminders == ["仅首轮提醒", ""]
+    assert all("仅首轮提醒" not in message.content for message in app.conv.messages())
+
+
+@async_test
+async def test_clear_and_resume_dispatch_session_lifecycle_hooks(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    session_id = "20260723-120000-abcd"
+    writer = ArchiveWriter(paths_for(root, session_id).archive_path)
+    writer.append_message(Message(role="user", content="历史消息"), model="fake-model")
+    writer.close()
+    repository = SessionRepository(root)
+    summary = repository.list_sessions()[0]
+    config = ProviderConfig(
+        name="fake", protocol="openai", api_key="test-key", model="fake-model"
+    )
+    hooks = HookEngine(
+        HookCatalog(
+            (
+                Hook(
+                    "session-end",
+                    HookEvent.SESSION_END,
+                    None,
+                    Action("prompt", text="结束"),
+                    only_once=True,
+                ),
+                Hook(
+                    "session-resume",
+                    HookEvent.SESSION_RESUME,
+                    None,
+                    Action("prompt", text="恢复"),
+                    only_once=True,
+                ),
+            )
+        )
+    )
+    app = MewCodeApp(
+        [config],
+        root=root,
+        registry=Registry(),
+        skill_runtime=empty_skill_runtime(root),
+        session_repository=repository,
+        hook_engine=hooks,
+    )
+    provider = FakeProvider()
+
+    async with app.run_test():
+        app.provider = provider
+        app._ensure_runtime()
+        ending_state = app.runtime.hook_state
+        await app.command_control.clear_session()
+        assert ending_state.executed == {"session-end"}
+        await app._finish_resume(summary)
+        assert app.runtime is not None
+        assert app.runtime.hook_state.executed == {"session-resume"}
 
 
 @async_test
