@@ -242,8 +242,8 @@ async def test_status_uses_mode_specific_tool_count_and_memory_count(
         await submit(app, "/status")
         plan_status = last_command_output(app)
 
-    assert "可用工具数量: 8" in default_status
-    assert "可用工具数量: 4" in plan_status
+    assert "可用工具数量: 13" in default_status
+    assert "可用工具数量: 7" in plan_status
     assert "已加载记忆条目数: 2" in plan_status
     assert provider.requests == []
 
@@ -272,6 +272,11 @@ async def test_inline_skill_is_loaded_on_demand_and_cleared_with_session(
             "read_file",
             "load_skill",
             "install_skill",
+            "Agent",
+            "TaskList",
+            "TaskGet",
+            "TaskStop",
+            "SendMessage",
         ]
         assert [skill.name for skill in app.skill_runtime.active_skills()] == ["review"]
 

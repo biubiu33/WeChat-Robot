@@ -48,6 +48,7 @@ async def consume_stream(app: MewCodeApp) -> None:
             hook_engine=app.hook_engine,
             hook_state=app.runtime.hook_state if app.runtime is not None else None,
             hook_context_supplier=app.hook_context,
+            reminder_supplier=app.task_manager.take_notifications,
         )
         cancel = app.turn_cancel if app.turn_cancel is not None else asyncio.Event()
         saw_error = False

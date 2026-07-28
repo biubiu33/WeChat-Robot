@@ -41,6 +41,9 @@ class LoadSkillTool:
             "required": ["name"],
         }
 
+    def child_copy(self, ordinary_tools: set[str] | frozenset[str]) -> "ChildLoadSkillTool":
+        return ChildLoadSkillTool(SkillRuntime(self._runtime.catalog, ordinary_tools))
+
     async def execute(self, args: str) -> Result:
         values, error = parse_arguments(args)
         if error is not None:
@@ -62,6 +65,45 @@ class LoadSkillTool:
             if self._fork_executor is None:
                 return error_result("fork_unavailable", "当前环境不支持 fork Skill")
             return Result(await self._fork_executor.run(active))
+        except SkillError as exc:
+            return error_result("skill_load_failed", str(exc))
+
+
+class ChildLoadSkillTool:
+    """Per-child Skill loader that cannot cross the child-agent boundary."""
+
+    read_only = True
+    system = True
+
+    def __init__(self, runtime: SkillRuntime) -> None:
+        self._runtime = runtime
+
+    def name(self) -> str:
+        return "load_skill"
+
+    def description(self) -> str:
+        return "Load an inline Skill in this child agent only."
+
+    def parameters(self) -> dict[str, object]:
+        return LoadSkillTool(self._runtime).parameters()
+
+    async def execute(self, args: str) -> Result:
+        values, error = parse_arguments(args)
+        if error is not None:
+            return error
+        name, error = require_string(values or {}, "name")
+        if error is not None:
+            return error
+        argument = (values or {}).get("argument", "")
+        if not isinstance(argument, str):
+            return error_result("invalid_arguments", "Parameter argument must be a string")
+        skill = self._runtime.catalog.get(name or "")
+        if skill is None:
+            return error_result("skill_not_found", f"Unknown Skill: {name}")
+        if skill.metadata.mode is SkillMode.FORK:
+            return error_result("nested_agent_denied", "Sub-agents cannot run fork Skills")
+        try:
+            return Result(self._runtime.activate_inline(name or "", argument).instruction)
         except SkillError as exc:
             return error_result("skill_load_failed", str(exc))
 
@@ -111,4 +153,4 @@ def _installed_message(installed: InstalledSkill) -> str:
     return f"已安装 Skill: {installed.skill.metadata.name}\n位置: {installed.path}"
 
 
-__all__ = ["ForkExecutor", "InstallSkillTool", "LoadSkillTool"]
+__all__ = ["ChildLoadSkillTool", "ForkExecutor", "InstallSkillTool", "LoadSkillTool"]

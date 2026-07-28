@@ -101,6 +101,37 @@ providers:
 
 MCP 配置示例见 [`.mewcode/mcp-servers.example.yaml`](.mewcode/mcp-servers.example.yaml)。复制为 `$HOME\.mewcode\mcp.yaml` 后，按需设置其中引用的环境变量。每个 Server 必须显式声明 `type: stdio` 或 `type: http`；`env` 和 `headers` 的值支持 `${VAR}` 展开。
 
+### Sub-agents
+
+主 Agent 始终拥有固定的五个系统工具：`Agent`、`TaskList`、`TaskGet`、`TaskStop` 和 `SendMessage`。`Agent` 的 `subagent_type` 非空时运行预定义角色；省略该字段时 Fork 当前对话历史，并且始终转入后台。
+
+角色文件采用 Markdown 加 YAML frontmatter，按项目、用户、内置（插件位当前为空）的优先级覆盖：
+
+1. `<project>/.mewcode/agents/*.md`
+2. `~/.mewcode/agents/*.md`
+3. 安装包内置角色
+
+```markdown
+---
+name: investigate-api
+description: Inspect an API implementation without changing files.
+tools: [read_file, glob, grep]
+disallowedTools: [bash]
+model: haiku
+maxTurns: 20
+permissionMode: plan
+background: false
+---
+
+Work independently, use the available tools, and return a concise result.
+```
+
+`model` 是 `config.yaml` 中的 Provider `name`（或 `inherit`），不是硬编码模型 ID。内置角色包括 `general-purpose`、`explore` 和 `plan`。子 Agent 分别隔离消息、会话权限、文件读缓存、Token 用量与 Hook 会话状态；只有显式的 Allow Forever 会写入持久权限规则。
+
+定义式任务可用 `run_in_background: true` 转后台，或在前台超过 120 秒后自动接管。Fork 必须后台。后台任务完成后会在主 Agent 下一次模型请求中以一次性的 `<task-notification>` 提醒提供结果；通知不写入对话或会话归档。`enable_subagent_background: false` 可禁用定义式后台，Fork 则会返回结构化错误。
+
+子 Agent 看不到 Agent/Task 控制工具，且无法运行 fork Skill；它们可在独立上下文中加载 inline Skill。文件读缓存仅在各自子 Agent 内有效，文件外部变动或成功写入/编辑会使对应缓存失效。
+
 ### Hook
 
 Hook 在 Agent 生命周期的固定时刻自动执行声明式动作。启动时依次读取并合并以下 UTF-8 YAML 文件；同一文件内按声明顺序执行，项目级规则在用户级规则之前：

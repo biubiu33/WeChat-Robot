@@ -12,6 +12,7 @@ class Mode(IntEnum):
     ACCEPT_EDITS = 1
     PLAN = 2
     BYPASS = 3
+    DONT_ASK = 4
     # 保留旧 API 兼容性；新代码统一使用 DEFAULT。
     NORMAL = DEFAULT
 
@@ -21,6 +22,7 @@ class Mode(IntEnum):
             Mode.ACCEPT_EDITS: "acceptEdits",
             Mode.PLAN: "plan",
             Mode.BYPASS: "bypassPermissions",
+            Mode.DONT_ASK: "dontAsk",
         }[self]
 
 
@@ -54,6 +56,7 @@ def parse_mode(value: str) -> tuple[Mode, bool]:
         "acceptedits": Mode.ACCEPT_EDITS,
         "plan": Mode.PLAN,
         "bypasspermissions": Mode.BYPASS,
+        "dontask": Mode.DONT_ASK,
     }
     mode = mapping.get(normalized)
     return (mode, True) if mode is not None else (Mode.DEFAULT, False)

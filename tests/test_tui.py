@@ -55,7 +55,7 @@ class FakeProvider:
 
     async def stream(self, req: Request) -> AsyncIterator[StreamEvent]:
         self.requests += 1
-        assert len(req.tools) == 8
+        assert len(req.tools) == 13
         assert req.system.stable
         assert "环境信息" in req.system.environment
         yield StreamEvent(text=f"回复 {self.requests}")
@@ -501,6 +501,37 @@ async def test_tui_escape_cancels_streaming_turn_without_exiting() -> None:
         assert input_area.read_only is False
         assert input_area.has_focus
         assert app.conv.last_role() == "assistant"
+
+
+@async_test
+async def test_tui_escape_detaches_foreground_subagent_without_cancelling_turn() -> None:
+    class DetachingAgentTool:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def detach_foreground(self) -> object:
+            self.calls += 1
+            return object()
+
+    config = ProviderConfig(
+        name="fake",
+        protocol="openai",
+        api_key="test-key",
+        model="fake-model",
+    )
+    app = MewCodeApp([config], registry=new_default_registry())
+    tool = DetachingAgentTool()
+
+    async with app.run_test():
+        cancel = asyncio.Event()
+        setattr(app, "agent_tool", tool)
+        app.state = SessionState.STREAMING
+        app.turn_cancel = cancel
+
+        app.action_cancel_turn()
+
+        assert tool.calls == 1
+        assert not cancel.is_set()
 
 
 @async_test

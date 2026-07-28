@@ -27,6 +27,7 @@ class ProviderConfig:
 @dataclass(frozen=True)
 class Config:
     providers: list[ProviderConfig] = field(default_factory=list)
+    enable_subagent_background: bool = True
 
 
 @dataclass(frozen=True)
@@ -121,7 +122,13 @@ def _from_dict(raw: Any) -> Config:
             )
         )
 
-    return Config(providers=providers)
+    enable_subagent_background = raw.get("enable_subagent_background", True)
+    if not isinstance(enable_subagent_background, bool):
+        raise ConfigError("enable_subagent_background 必须是布尔值")
+    return Config(
+        providers=providers,
+        enable_subagent_background=enable_subagent_background,
+    )
 
 
 def _required_str(item: dict[str, Any], index: int, field_name: str) -> str:

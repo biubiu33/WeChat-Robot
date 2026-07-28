@@ -164,17 +164,33 @@ def _discover(
 
 
 def _entries(root: Path) -> list[tuple[Path, Path]]:
-    if not root.is_dir():
+    try:
+        children = sorted(root.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
         return []
     entries: list[tuple[Path, Path]] = []
-    for item in sorted(root.iterdir(), key=lambda path: path.name.lower()):
-        if item.is_file() and item.suffix.lower() == ".md":
+    for item in children:
+        if _is_file(item) and item.suffix.lower() == ".md":
             entries.append((item, item.parent))
-        elif item.is_dir():
+        elif _is_dir(item):
             entry = item / "SKILL.md"
-            if entry.is_file():
+            if _is_file(entry):
                 entries.append((entry, item))
     return entries
+
+
+def _is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 def _parse_frontmatter(content: str) -> dict[str, Any]:

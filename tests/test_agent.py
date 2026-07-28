@@ -780,3 +780,45 @@ async def test_skill_activation_updates_the_next_request_context_tools_and_model
         "load_skill",
     ]
     assert [tool.name for tool in after.tools] == ["read_file", "load_skill"]
+
+
+@async_test
+async def test_run_to_completion_uses_shared_loop_and_runtime_options() -> None:
+    provider = FakeProvider(
+        [[StreamEvent(text="completed", usage=Usage(7, 3)), StreamEvent(done=True)]]
+    )
+    observed = []
+
+    async def observe(usage):
+        observed.append(usage)
+
+    result = await Agent(
+        provider,
+        Registry(),
+        max_turns=3,
+        stable_system="role instruction",
+        reminder_supplier=lambda: "one-shot reminder",
+        usage_observer=observe,
+    ).run_to_completion(Conversation(), "perform task", Mode.BYPASS)
+
+    assert result.text == "completed"
+    assert not result.limit_reached
+    assert provider.requests[0].system.stable == "role instruction"
+    assert provider.requests[0].reminder == "one-shot reminder"
+    assert provider.requests[0].messages[-1].content == "perform task"
+    assert observed[0].input == 7
+
+
+@async_test
+async def test_run_to_completion_reports_custom_turn_limit() -> None:
+    call = ToolCall("read", "read_file", "{}")
+    provider = RepeatingToolProvider(call)
+    registry = Registry()
+    registry.register(RecordingTool("read_file", [], read_only=True))
+
+    result = await Agent(provider, registry, max_turns=1).run_to_completion(
+        Conversation(), "keep reading", Mode.BYPASS
+    )
+
+    assert result.limit_reached
+    assert "Maximum iterations reached (1)." in result.text

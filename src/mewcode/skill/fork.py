@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from mewcode.agent import Agent, NOTICE_CANCELLED
+from mewcode.agent import NOTICE_CANCELLED
 from mewcode.conversation import Conversation
 from mewcode.llm import Provider
 from mewcode.llm.generation import generate_text
 from mewcode.permission import Engine, Mode
+from mewcode.subagent import ParentContext, SubAgentHost
 from mewcode.tool import Registry
 
 from .model import ActiveSkill
@@ -24,11 +25,16 @@ class ForkSummary:
 
 class ForkSkillRunner:
     def __init__(
-        self, registry: Registry, engine: Engine, mode: Mode = Mode.DEFAULT
+        self,
+        registry: Registry,
+        engine: Engine,
+        mode: Mode = Mode.DEFAULT,
+        host: SubAgentHost | None = None,
     ) -> None:
         self._registry = registry
         self._engine = engine
         self._mode = mode
+        self._host = host if host is not None else SubAgentHost()
 
     async def run(
         self,
@@ -37,19 +43,23 @@ class ForkSkillRunner:
         cancel: asyncio.Event | None = None,
     ) -> ForkSummary:
         cancelled = cancel if cancel is not None else asyncio.Event()
-        conversation = Conversation()
-        conversation.add_user(skill.argument)
-        agent = Agent(
-            provider,
-            self._registry,
+        parent = ParentContext(
+            conversation=Conversation(),
+            provider=provider,
             engine=self._engine,
-            prompt_supplier=lambda: ("", "", ""),
-            environment_supplier=lambda environment: _environment(skill, environment),
-            tool_policy_supplier=lambda: skill.allowed_tools,
+            registry=self._registry,
+            root=self._engine.root,
+            providers={},
         )
-        async for _ in agent.run(conversation, self._mode, cancelled):
-            pass
-        result = conversation.messages()[-1].content if len(conversation) else ""
+        runtime = self._host.prepare_skill(
+            skill.name,
+            skill.instruction,
+            skill.allowed_tools,
+            parent,
+            self._mode,
+        )
+        completion = await self._host.run_inline(runtime, skill.argument, cancelled)
+        result = completion.text
         if cancelled.is_set() or result == NOTICE_CANCELLED:
             return ForkSummary(NOTICE_CANCELLED)
         return ForkSummary(await _summary(provider, result))

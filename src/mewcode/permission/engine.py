@@ -52,6 +52,20 @@ class Engine:
 
         persist_local_allow(self, call)
 
+    def fork_for_subagent(self, fallback: Mode = Mode.DEFAULT) -> "Engine":
+        """Create a child Engine with a one-time snapshot of session allows."""
+
+        return Engine(
+            root=self.root,
+            blacklist=self.blacklist,
+            session=RuleSet(allow=list(self.session.allow)),
+            user=self.user,
+            project=self.project,
+            local=self.local,
+            local_path=self.local_path,
+            default_mode=fallback,
+        )
+
 
 def new_engine(
     root: str | Path,
@@ -132,6 +146,8 @@ def check(
 
 
 def mode_fallback(mode: Mode, category: Category) -> Decision:
+    if mode is Mode.DONT_ASK:
+        return Decision.ALLOW
     if category is Category.READ or mode is Mode.BYPASS:
         return Decision.ALLOW
     if mode is Mode.ACCEPT_EDITS and category is Category.WRITE:

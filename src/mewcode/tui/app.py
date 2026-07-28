@@ -48,6 +48,14 @@ from mewcode.skill import (
     SkillValidationError,
 )
 from mewcode.session.runtime import SessionRuntime
+from mewcode.subagent import (
+    AgentCatalog,
+    AgentTool,
+    ParentContext,
+    SubAgentHost,
+    TaskManager,
+    new_subagent_tools,
+)
 from mewcode.tool import Registry, new_default_registry
 
 from .completion import CommandCompletionMenu
@@ -249,6 +257,8 @@ class MewCodeApp(App):
         session_repository: SessionRepository | None = None,
         skill_runtime: SkillRuntime | None = None,
         hook_engine: HookEngine | None = None,
+        agent_catalog: AgentCatalog | None = None,
+        enable_subagent_background: bool = True,
     ) -> None:
         super().__init__()
         self.providers = providers
@@ -302,6 +312,14 @@ class MewCodeApp(App):
         self.pending: ApprovalRequest | None = None
         self.approve_cursor = 0
         self._completion_suppressed_text: str | None = None
+        self.agent_catalog = agent_catalog or AgentCatalog.load(self.root)
+        self.subagent_host = SubAgentHost(self.agent_catalog)
+        self.task_manager = TaskManager(self.subagent_host)
+        self.enable_subagent_background = enable_subagent_background
+        self.agent_tool: AgentTool | None = None
+        self._subagent_approval = False
+        self._approval_return_state = self.state
+        self._register_subagent_tools()
         from .command import TuiCommandControl
 
         self.command_control = TuiCommandControl(self)
@@ -324,6 +342,22 @@ class MewCodeApp(App):
                 continue
             if not getattr(existing, "system", False):
                 raise RuntimeError(f"系统工具名称冲突: {tool.name()}")
+
+    def _register_subagent_tools(self) -> None:
+        tools = new_subagent_tools(
+            self.subagent_host,
+            self.task_manager,
+            self.subagent_parent_context,
+            enable_background=self.enable_subagent_background,
+        )
+        self.agent_tool = tools[0]
+        for tool in tools:
+            existing = self.registry.get(tool.name())
+            if existing is None:
+                self.registry.register(tool)
+                continue
+            if not getattr(existing, "system", False):
+                raise RuntimeError(f"System tool name conflict: {tool.name()}")
 
     def refresh_skills(self) -> str | None:
         """Reload changed Skills and atomically rebuild their slash commands."""
@@ -372,6 +406,54 @@ class MewCodeApp(App):
             cached = new_provider(replace(self.provider_config, model=model))
             self._skill_provider_cache[model] = cached
         return cached
+
+    def provider_for_profile(self, profile: str) -> Provider:
+        if self.provider is None or self.provider_config is None:
+            raise RuntimeError("Provider has not been selected")
+        for config in self.providers:
+            if config.name != profile:
+                continue
+            if config.name == self.provider_config.name:
+                return self.provider
+            cached = self._skill_provider_cache.get(profile)
+            if cached is None:
+                cached = new_provider(config)
+                self._skill_provider_cache[profile] = cached
+            return cached
+        raise RuntimeError(f"Configured provider profile is unavailable: {profile}")
+
+    def subagent_parent_context(self) -> ParentContext:
+        if self.provider is None:
+            raise RuntimeError("Provider has not been selected")
+        profiles = {
+            config.name: self.provider_for_profile(config.name)
+            for config in self.providers
+        }
+        return ParentContext(
+            conversation=self.conv,
+            provider=self.provider,
+            engine=self.engine,
+            registry=self.registry,
+            root=self.root,
+            providers=profiles,
+            hook_engine=self.hook_engine,
+            version=self.version,
+            allowed_tools=self.skill_runtime.ordinary_allowed_tools(),
+            stable_system=self._stable_prompt(),
+            approval_handler=self.forward_subagent_approval,
+        )
+
+    async def forward_subagent_approval(
+        self, child_name: str, request: ApprovalRequest
+    ) -> None:
+        self.pending = request
+        self.approve_cursor = 0
+        self._subagent_approval = True
+        self._approval_return_state = self.state
+        self.state = SessionState.APPROVING
+        from .stream import refresh_approval_view
+
+        refresh_approval_view(self)
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -838,6 +920,7 @@ class MewCodeApp(App):
     async def action_quit(self) -> None:
         if self._stream_task is not None:
             self._stream_task.cancel()
+        await self.task_manager.close()
         if self.runtime is not None:
             await self._close_runtime()
         self.skill_runtime.clear()
@@ -855,9 +938,17 @@ class MewCodeApp(App):
 
     def action_cancel_turn(self) -> None:
         if self.state is SessionState.APPROVING and self.pending is not None:
+            subagent_approval = self._subagent_approval
             if not self.pending.respond.done():
                 self.pending.respond.set_result(Outcome.DENY_ONCE)
             self.pending = None
+            self._subagent_approval = False
+            if subagent_approval:
+                self.state = self._approval_return_state
+                return
+        if self.state is SessionState.STREAMING and self.agent_tool is not None:
+            if self.agent_tool.detach_foreground() is not None:
+                return
         if (
             self.state
             in (SessionState.STREAMING, SessionState.APPROVING, SessionState.FORKING)
@@ -868,7 +959,9 @@ class MewCodeApp(App):
     async def action_cycle_permission_mode(self) -> None:
         if self.state is not SessionState.IDLE:
             return
-        self.mode = Mode((int(self.mode) + 1) % len(Mode))
+        main_modes = (Mode.DEFAULT, Mode.ACCEPT_EDITS, Mode.PLAN, Mode.BYPASS)
+        current = main_modes.index(self.mode) if self.mode in main_modes else 0
+        self.mode = main_modes[(current + 1) % len(main_modes)]
         await self.append_timeline(notice_entry(f"权限模式已切换为 {self.mode}"))
         self.refresh_status()
 
@@ -908,7 +1001,12 @@ class MewCodeApp(App):
         )[index]
         pending = self.pending
         self.pending = None
-        self.state = SessionState.STREAMING
+        self.state = (
+            self._approval_return_state
+            if self._subagent_approval
+            else SessionState.STREAMING
+        )
+        self._subagent_approval = False
         if not pending.respond.done():
             pending.respond.set_result(outcome)
 

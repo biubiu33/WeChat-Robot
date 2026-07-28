@@ -43,6 +43,40 @@ providers:
     assert cfg.providers[0].context_window == 200000
     assert cfg.providers[1].base_url == "https://api.openai.com/v1"
     assert cfg.providers[1].context_window == 1_000_000
+    assert cfg.enable_subagent_background is True
+
+
+def test_loads_explicit_subagent_background_flag(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        """
+enable_subagent_background: false
+providers:
+  - name: test
+    protocol: openai
+    api_key: test-key
+    model: test-model
+""",
+    )
+
+    assert load(str(path)).enable_subagent_background is False
+
+
+def test_rejects_non_boolean_subagent_background_flag(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        """
+enable_subagent_background: "yes"
+providers:
+  - name: test
+    protocol: openai
+    api_key: test-key
+    model: test-model
+""",
+    )
+
+    with pytest.raises(ConfigError, match="enable_subagent_background"):
+        load(str(path))
 
 
 @pytest.mark.parametrize(

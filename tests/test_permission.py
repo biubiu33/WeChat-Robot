@@ -319,3 +319,52 @@ def test_session_rule_overrides_local_rule(tmp_path: Path) -> None:
 
     assert denied is Decision.DENY
     assert allowed is Decision.ALLOW
+
+
+def test_subagent_engine_snapshots_only_parent_session_allows(tmp_path: Path) -> None:
+    engine, err = new_engine(tmp_path)
+    first = call("write_file", '{"path":"src/a.py","content":"x"}')
+    later = call("write_file", '{"path":"src/b.py","content":"x"}')
+
+    assert err is None
+    allow_session(engine, first)
+    child = engine.fork_for_subagent()
+    allow_session(engine, later)
+    allow_session(child, call("write_file", '{"path":"src/c.py","content":"x"}'))
+
+    assert check(child, Mode.DEFAULT, first, False)[0] is Decision.ALLOW
+    assert check(child, Mode.DEFAULT, later, False)[0] is Decision.ASK
+    assert check(engine, Mode.DEFAULT, call("write_file", '{"path":"src/c.py","content":"x"}'), False)[0] is Decision.ASK
+
+
+def test_subagent_allow_forever_updates_shared_local_rules(tmp_path: Path) -> None:
+    engine, err = new_engine(tmp_path)
+    child = engine.fork_for_subagent()
+    write = call("write_file", '{"path":"src/a.py","content":"x"}')
+
+    assert err is None
+    persist_local_allow(child, write)
+
+    assert check(engine, Mode.DEFAULT, write, False)[0] is Decision.ALLOW
+    assert "Write(src/a.py)" in engine.local_path.read_text(encoding="utf-8")
+
+
+def test_dont_ask_allows_only_unmatched_safe_operations(tmp_path: Path) -> None:
+    engine, err = new_engine(tmp_path)
+
+    assert err is None
+    assert check(
+        engine,
+        Mode.DONT_ASK,
+        call("write_file", '{"path":"src/a.py","content":"x"}'),
+        False,
+    )[0] is Decision.ALLOW
+    assert check(
+        engine, Mode.DONT_ASK, call("bash", '{"command":"rm -rf /"}'), False
+    )[0] is Decision.DENY
+    assert check(
+        engine,
+        Mode.DONT_ASK,
+        call("write_file", '{"path":"../escape.txt","content":"x"}'),
+        False,
+    )[0] is Decision.DENY

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -88,6 +88,14 @@ class Event:
 
 
 @dataclass(frozen=True)
+class Completion:
+    text: str
+    limit_reached: bool = False
+    cancelled: bool = False
+    error: Exception | None = None
+
+
+@dataclass(frozen=True)
 class _StreamOutcome:
     text: str
     calls: list[ToolCall]
@@ -113,6 +121,13 @@ class Agent:
         hook_state: HookSessionState | None = None,
         hook_context_supplier: Callable[[HookEvent, dict[str, Any]], HookContext]
         | None = None,
+        *,
+        max_turns: int = MAX_ITERATIONS,
+        stable_system: str | None = None,
+        reminder_supplier: Callable[[], str] | None = None,
+        approval_forwarder: Callable[[ApprovalRequest], Awaitable[None] | None]
+        | None = None,
+        usage_observer: Callable[[Usage], Awaitable[None] | None] | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -126,6 +141,13 @@ class Agent:
         self._hook_engine = hook_engine
         self._hook_state = hook_state
         self._hook_context_supplier = hook_context_supplier
+        if max_turns <= 0:
+            raise ValueError("max_turns must be positive")
+        self._max_turns = max_turns
+        self._stable_system = stable_system
+        self._reminder_supplier = reminder_supplier
+        self._approval_forwarder = approval_forwarder
+        self._usage_observer = usage_observer
 
     async def run(
         self,
@@ -136,7 +158,7 @@ class Agent:
         cancel_event = cancel if cancel is not None else asyncio.Event()
         unknown_run = 0
 
-        for iteration in range(1, MAX_ITERATIONS + 1):
+        for iteration in range(1, self._max_turns + 1):
             if cancel_event.is_set():
                 self._finish_cancelled(conv)
                 yield Event(notice=NOTICE_CANCELLED)
@@ -149,7 +171,9 @@ class Agent:
             )
             definitions = self._definitions_for_mode(mode, allowed_tools)
             instructions, memory, skills = self._prompt_values()
-            stable_system = build_system_prompt(instructions, memory, skills)
+            stable_system = self._stable_system or build_system_prompt(
+                instructions, memory, skills
+            )
             environment = await asyncio.to_thread(
                 gather_environment, self._version, provider.model
             )
@@ -208,14 +232,14 @@ class Agent:
                             environment_text,
                         ),
                     )
-                yield Event(
-                    usage=Usage(
-                        input=outcome.usage.input_tokens,
-                        output=outcome.usage.output_tokens,
-                        cache_write=outcome.usage.cache_write,
-                        cache_read=outcome.usage.cache_read,
-                    )
+                usage = Usage(
+                    input=outcome.usage.input_tokens,
+                    output=outcome.usage.output_tokens,
+                    cache_write=outcome.usage.cache_write,
+                    cache_read=outcome.usage.cache_read,
                 )
+                await self._observe_usage(usage)
+                yield Event(usage=usage)
 
             if not outcome.calls:
                 final_text = self._ensure_final(outcome.text)
@@ -256,10 +280,34 @@ class Agent:
                 yield Event(done=True)
                 return
 
-        yield Event(notice=NOTICE_MAX_ITER)
-        self._ensure_assistant_tail(conv, NOTICE_MAX_ITER)
-        await self._dispatch_hook(HookEvent.STOP, {"iter": MAX_ITERATIONS})
+        notice = self._max_iter_notice()
+        yield Event(notice=notice)
+        self._ensure_assistant_tail(conv, notice)
+        await self._dispatch_hook(HookEvent.STOP, {"iter": self._max_turns})
         yield Event(done=True)
+
+    async def run_to_completion(
+        self,
+        conv: Conversation,
+        task: str,
+        mode: Mode = Mode.DEFAULT,
+        cancel: asyncio.Event | None = None,
+    ) -> Completion:
+        """Append a task and consume the regular tool and permission path."""
+
+        conv.add_user(task)
+        error: Exception | None = None
+        limit_reached = False
+        cancelled = False
+        async for event in self.run(conv, mode, cancel):
+            if event.err is not None:
+                error = event.err
+            if event.notice == self._max_iter_notice():
+                limit_reached = True
+            if event.notice == NOTICE_CANCELLED:
+                cancelled = True
+        text = conv.messages()[-1].content if len(conv) else ""
+        return Completion(text, limit_reached, cancelled, error)
 
     async def _stream_once(
         self,
@@ -512,14 +560,17 @@ class Agent:
             HookEvent.NOTIFICATION,
             {"kind": "approval", "detail": call.name},
         )
-        yield Event(
-            approval=ApprovalRequest(
-                name=call.name,
-                args=self._redact(call.input),
-                reason=reason,
-                respond=future,
-            )
+        request = ApprovalRequest(
+            name=call.name,
+            args=self._redact(call.input),
+            reason=reason,
+            respond=future,
         )
+        if self._approval_forwarder is not None:
+            forwarded = self._approval_forwarder(request)
+            if forwarded is not None:
+                await forwarded
+        yield Event(approval=request)
         cancelled = asyncio.create_task(cancel.wait())
         try:
             done, _ = await asyncio.wait(
@@ -600,10 +651,12 @@ class Agent:
         return self._provider_supplier() if self._provider_supplier else self._provider
 
     def _reminder_for(self, mode: Mode, iteration: int) -> str:
-        if mode is not Mode.PLAN:
-            return ""
-        full = iteration == 1 or (iteration - 1) % PLAN_REMINDER_INTERVAL == 0
-        return plan_reminder(full)
+        plan = ""
+        if mode is Mode.PLAN:
+            full = iteration == 1 or (iteration - 1) % PLAN_REMINDER_INTERVAL == 0
+            plan = plan_reminder(full)
+        supplied = self._reminder_supplier() if self._reminder_supplier else ""
+        return "\n".join(item for item in (plan, supplied) if item)
 
     def _with_hook_reminders(self, reminder: str) -> str:
         if self._hook_engine is None or self._hook_state is None:
@@ -622,6 +675,13 @@ class Agent:
             else HookContext(event, {"event": event.value, **payload})
         )
         return await self._hook_engine.dispatch(event, context, self._hook_state)
+
+    async def _observe_usage(self, usage: Usage) -> None:
+        if self._usage_observer is None:
+            return
+        result = self._usage_observer(usage)
+        if result is not None:
+            await result
 
     async def _pre_tool_result(self, call: ToolCall) -> ToolResult | None:
         dispatch = await self._dispatch_hook(
@@ -742,6 +802,11 @@ class Agent:
         redact = getattr(self._provider, "redact", None)
         return redact(text) if callable(redact) else text
 
+    def _max_iter_notice(self) -> str:
+        if self._max_turns == MAX_ITERATIONS:
+            return NOTICE_MAX_ITER
+        return f"Maximum iterations reached ({self._max_turns})."
+
 
 @dataclass(frozen=True)
 class _ExecutionOutcome:
@@ -752,6 +817,7 @@ class _ExecutionOutcome:
 __all__ = [
     "Agent",
     "ApprovalRequest",
+    "Completion",
     "Event",
     "MAX_ITERATIONS",
     "MAX_UNKNOWN_RUN",

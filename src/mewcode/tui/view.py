@@ -182,4 +182,5 @@ def _mode_label(mode: Mode) -> str:
         Mode.ACCEPT_EDITS: "ACCEPT EDITS",
         Mode.PLAN: "PLAN",
         Mode.BYPASS: "BYPASS",
+        Mode.DONT_ASK: "DONT ASK",
     }[mode]
