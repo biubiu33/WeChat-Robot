@@ -8,9 +8,13 @@ from pathlib import Path
 import pytest
 
 from mewcode.config import ProviderConfig
-from mewcode.llm import Request, StreamEvent
+from mewcode.llm import Message, Request, StreamEvent, ToolCall, ToolResult
 from mewcode.wechat.config import WechatConfig
-from mewcode.wechat.runtime import WechatAgentRuntime, WechatTurnCancelled
+from mewcode.wechat.runtime import (
+    WechatAgentRuntime,
+    WechatTurnCancelled,
+    _wechat_history_messages,
+)
 from mewcode.wechat.store import WechatStateStore
 
 
@@ -54,28 +58,55 @@ def configs(timeout: float = 2.0) -> tuple[ProviderConfig, WechatConfig]:
     return provider, wechat
 
 
+def test_history_filter_drops_legacy_weather_tool_messages() -> None:
+    messages = [
+        Message("user", "南昌天气"),
+        Message(
+            "assistant",
+            "[微信公共信息工具内容未写入会话档案]",
+            [ToolCall("legacy-weather", "get_weather", "{}")],
+        ),
+        Message(
+            "tool",
+            "[微信公共信息工具内容未写入会话档案]",
+            tool_results=[
+                ToolResult(
+                    "legacy-weather",
+                    "[微信公共信息工具内容未写入会话档案]",
+                )
+            ],
+        ),
+        Message("assistant", "旧的最终天气回复"),
+    ]
+
+    assert _wechat_history_messages(messages) == [messages[0], messages[3]]
+
+
 @async_test
 async def test_runtime_isolates_and_restores_friend_sessions(tmp_path: Path) -> None:
     provider_config, wechat_config = configs()
     store = WechatStateStore(tmp_path)
-    provider = FakeProvider(["A1", "B1", "A2"])
+    provider = FakeProvider(["南昌今天多云", "请告诉我城市", "南昌明天有雨"])
     runtime = WechatAgentRuntime(
         tmp_path, provider_config, wechat_config, store, provider=provider
     )
 
-    assert await runtime.reply("A", "alpha", asyncio.Event()) == "A1"
-    assert await runtime.reply("B", "beta", asyncio.Event()) == "B1"
+    assert await runtime.reply("A", "南昌今天天气", asyncio.Event()) == "南昌今天多云"
+    assert await runtime.reply("B", "那明天呢", asyncio.Event()) == "请告诉我城市"
     assert store.get_session_id("A") != store.get_session_id("B")
 
     restored = WechatAgentRuntime(
         tmp_path, provider_config, wechat_config, store, provider=provider
     )
-    assert await restored.reply("A", "again", asyncio.Event()) == "A2"
+    assert await restored.reply("A", "那明天呢", asyncio.Event()) == "南昌明天有雨"
     assert [message.content for message in provider.requests[-1].messages] == [
-        "alpha",
-        "A1",
-        "again",
+        "南昌今天天气",
+        "南昌今天多云",
+        "那明天呢",
     ]
+    assert all(
+        "南昌" not in message.content for message in provider.requests[1].messages
+    )
     store.close()
 
 

@@ -80,7 +80,6 @@ class WechatAgentRuntime:
                                 "get_current_time",
                                 "web_search",
                                 "web_fetch",
-                                "get_weather",
                             }
                         )
                         if turn is not None
@@ -163,7 +162,7 @@ def _wechat_environment(tools_enabled: bool) -> str:
     timezone_name = get_localzone_name()
     now = datetime.now(ZoneInfo(timezone_name)).isoformat(timespec="seconds")
     capability = (
-        "仅可使用已列出的四个只读公共信息工具；不能访问本地环境。"
+        "仅可使用已列出的三个只读公共信息工具；不能访问本地环境。"
         if tools_enabled
         else "你没有任何工具，也不能访问本地环境。"
     )
