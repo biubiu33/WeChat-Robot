@@ -28,6 +28,7 @@ class ProviderConfig:
 class Config:
     providers: list[ProviderConfig] = field(default_factory=list)
     enable_subagent_background: bool = True
+    wechat: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -125,9 +126,13 @@ def _from_dict(raw: Any) -> Config:
     enable_subagent_background = raw.get("enable_subagent_background", True)
     if not isinstance(enable_subagent_background, bool):
         raise ConfigError("enable_subagent_background 必须是布尔值")
+    wechat = raw.get("wechat")
+    if wechat is not None and not isinstance(wechat, dict):
+        raise ConfigError("wechat 必须是对象或省略")
     return Config(
         providers=providers,
         enable_subagent_background=enable_subagent_background,
+        wechat=dict(wechat) if wechat is not None else None,
     )
 
 

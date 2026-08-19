@@ -35,6 +35,12 @@ pip install -e .
 pip install pytest ruff mypy
 ```
 
+如需运行本地微信机器人，在同一个 MewCode 环境中安装 Windows 可选依赖：
+
+```powershell
+pip install -e ".[wechat]"
+```
+
 如果使用 `uv`：
 
 ```powershell
@@ -98,6 +104,45 @@ providers:
 | `base_url` | 可选的自定义或兼容端点；省略时使用 SDK 默认端点。 |
 | `thinking` | 可选，仅 Anthropic 生效。工具调用历史存在后会自动关闭扩展思考，以保持工具循环兼容。 |
 | `context_window` | 可选，模型上下文窗口的 Token 上限；省略时为 `1000000`。Chapter 08 的压缩控制器将使用该值。 |
+
+### 本地微信机器人
+
+V1 通过 Windows UIAutomation 接入一个已经登录的微信桌面客户端，仅兼容微信 `4.1.12.55`。微信配置由 MewCode 自己维护，不读取其他项目的配置、控件选择器或操作节拍。
+
+在现有 `~/.mewcode/config.yaml` 中增加顶层 `wechat`：
+
+```yaml
+wechat:
+  enabled: true
+  provider: claude
+  allowed_contacts:
+    - 专用测试好友
+  system_prompt: |
+    你是通过微信与好友聊天的个人助手。简洁、自然地回答；你没有任何本地工具。
+  task_timeout_seconds: 180
+  max_reply_chars: 1500
+  log_level: INFO
+```
+
+`provider` 必须引用 `providers` 中已有的 `name`。`allowed_contacts` 使用微信会话显示名精确匹配；重名会话会安全拒绝。每名好友使用独立并持久化的 MewCode Session，但微信好友始终没有 Bash、文件、MCP、Skills、Sub-agent、Hook 或长期记忆能力。
+
+启动前保持 Windows 桌面已解锁、微信主窗口可用且只运行一个已登录账号。先执行只读控件检查：
+
+```powershell
+mewcode-wechat --probe
+```
+
+确认输出版本为 `4.1.12.55`，并包含 `session_list`、`chat_message_list` 和 `chat_input_field` 后启动：
+
+```powershell
+mewcode-wechat
+```
+
+机器人只处理启动后到达的白名单私聊文字消息。多名好友的任务按全局 FIFO 串行执行；好友发送精确的 `/cancel` 可取消自己的当前任务。V1 不支持群聊、图片、语音、文件、主动发送、多账号、服务器部署或其他微信版本。
+
+机器人通过微信键盘搜索切换到原好友，并聚焦输入框后按 Enter 发送，不移动或点击鼠标。该过程会激活微信并短暂占用键盘焦点，因此运行期间可以移动鼠标，但不要在机器人切换会话或发送的瞬间向其他窗口输入内容。若搜索焦点、唯一结果、聊天标题或输入框状态无法确认，机器人会拒绝发送。
+
+首次收发验证应使用明确授权的专用普通好友。微信 4.1.12.55 的“文件传输助手”使用特殊页面，不暴露 V1 所需的标准消息列表和输入框，因此不作为测试会话；自动化测试不会连接或操作真实微信。
 
 MCP 配置示例见 [`.mewcode/mcp-servers.example.yaml`](.mewcode/mcp-servers.example.yaml)。复制为 `$HOME\.mewcode\mcp.yaml` 后，按需设置其中引用的环境变量。每个 Server 必须显式声明 `type: stdio` 或 `type: http`；`env` 和 `headers` 的值支持 `${VAR}` 展开。
 

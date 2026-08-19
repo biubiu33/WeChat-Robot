@@ -14,6 +14,7 @@ GITIGNORE_ENTRIES = (
     ".mewcode/sessions/",
     ".mewcode/cache/",
     ".mewcode/memory/",
+    ".mewcode/wechat.sqlite3*",
 )
 
 

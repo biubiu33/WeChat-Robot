@@ -19,6 +19,13 @@ dependencies = [
 
 [project.scripts]
 mewcode = "mewcode.cli:main"
+mewcode-wechat = "mewcode.wechat.cli:main"
+
+[project.optional-dependencies]
+wechat = [
+    "uiautomation>=2.0.29,<3",
+    "pywin32>=312",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mewcode"]

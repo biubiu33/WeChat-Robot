@@ -26,6 +26,7 @@ def test_session_paths_create_id_cache_and_gitignore(tmp_path: Path) -> None:
     assert paths.cache_dir.is_dir()
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == (
         ".venv/\n.mewcode/sessions/\n.mewcode/cache/\n.mewcode/memory/\n"
+        ".mewcode/wechat.sqlite3*\n"
     )
 
     ensure_project_layout(tmp_path)
