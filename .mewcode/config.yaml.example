@@ -13,3 +13,15 @@ providers:
   #   model: gpt-4o-mini
   #   base_url: https://api.openai.com/v1
   #   thinking: false
+
+# Windows 微信 4.1.12.55 本地机器人；联系人和 provider 请按实际情况修改。
+# wechat:
+#   enabled: true
+#   provider: claude
+#   allowed_contacts:
+#     - 专用测试好友
+#   info_tools:
+#     enabled: true
+#     tavily_api_key: ${TAVILY_API_KEY}
+#     nominatim_user_agent: MewCode-WeChat/0.1
+#     nominatim_proxy: ${HTTPS_PROXY}

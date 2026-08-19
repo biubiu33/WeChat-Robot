@@ -414,7 +414,8 @@ async def test_inline_completion_menu_opens_and_filters_in_place(
         assert [command.name for command in menu.commands] == sorted(
             command.name for command in app.command_registry.public_commands()
         )
-        assert len(menu.commands) == 16
+        # 用户级 Skill 会按设计动态增加公开 Slash 命令。
+        assert len(menu.commands) >= 16
         assert menu.highlighted == 0
         assert input_area.has_focus
         child_ids = [child.id for child in main.children]

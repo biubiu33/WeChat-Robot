@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from mewcode.wechat.models import WechatDesktopEvent
-from mewcode.wechat.store import WechatStateStore
+from mewcode.wechat.store import (
+    CachedLocation,
+    CachedWebPage,
+    CachedWebSearch,
+    WechatStateStore,
+)
 
 
 def event(
@@ -49,3 +54,34 @@ def test_session_binding_is_idempotent_persistent_and_conflict_safe(
     assert reopened.get_session_id("好友") == "session-1"
     assert reopened.get_session_id("陌生人") is None
     reopened.close()
+
+
+def test_info_cache_records_are_global_and_prunable(tmp_path: Path) -> None:
+    store = WechatStateStore(tmp_path)
+    store.put_location(CachedLocation("place:a", '{"value":1}', 10))
+    store.put_web_search(CachedWebSearch("search:a", "query", "[]", 20))
+    store.put_web_page(CachedWebPage("page:a", "https://a.example", "A", "body", 30))
+
+    assert store.get_location("place:a") == CachedLocation("place:a", '{"value":1}', 10)
+    assert store.get_web_search("search:a") == CachedWebSearch(
+        "search:a", "query", "[]", 20
+    )
+    assert store.get_web_page("page:a") == CachedWebPage(
+        "page:a", "https://a.example", "A", "body", 30
+    )
+
+    store.prune_info_cache(25)
+    assert store.get_location("place:a") is not None
+    assert store.get_web_search("search:a") is None
+    assert store.get_web_page("page:a") is not None
+    store.close()
+
+
+def test_tavily_monthly_credit_reservation_stops_at_limit(tmp_path: Path) -> None:
+    store = WechatStateStore(tmp_path)
+    assert store.reserve_tavily_credit("2026-08", limit=2)
+    assert store.reserve_tavily_credit("2026-08", limit=2)
+    assert not store.reserve_tavily_credit("2026-08", limit=2)
+    assert store.tavily_credits("2026-08") == 2
+    assert store.reserve_tavily_credit("2026-09", limit=2)
+    store.close()

@@ -122,9 +122,31 @@ wechat:
   task_timeout_seconds: 180
   max_reply_chars: 1500
   log_level: INFO
+  info_tools:
+    enabled: true
+    tavily_api_key: ${TAVILY_API_KEY}
+    nominatim_user_agent: MewCode-WeChat/0.1
+    nominatim_proxy: ${HTTPS_PROXY}
 ```
 
 `provider` 必须引用 `providers` 中已有的 `name`。`allowed_contacts` 使用微信会话显示名精确匹配；重名会话会安全拒绝。每名好友使用独立并持久化的 MewCode Session，但微信好友始终没有 Bash、文件、MCP、Skills、Sub-agent、Hook 或长期记忆能力。
+
+`info_tools.enabled` 默认是 `false`。启用后，微信侧只增加四个只读公共信息工具：本机／地点当前时间、Tavily 网页搜索、公开网页正文读取和 Open-Meteo 天气查询；不会继承终端 Coding Agent 的任何本地工具。建议只通过环境变量提供 Tavily Key：
+
+```powershell
+$env:TAVILY_API_KEY = "tvly-your-key"
+mewcode-wechat
+```
+
+网页搜索固定使用 Tavily 免费套餐的 Basic 模式，每轮最多搜索两次、每次最多五条，本地按自然月最多预留 1,000 credits，不启用 Advanced、自动付费回退或其他搜索源。缺少或失效的 Key 只会让网页搜索返回配置错误，时间、公开链接直读和天气仍可使用。网页直读每轮最多五页，仅接受公网 HTTP(S) 的 HTML／纯文本，单页最多 2 MiB、正文最多 50,000 字符；不启动浏览器、不执行 JavaScript、不读取登录态，并在每次重定向时重新检查 SSRF 边界。
+
+地点时间把国家名称解释为该国首都；具体城市由本地缓存和低频公共 Nominatim 解析，公共请求最多每秒一次并标注 OpenStreetMap。省略 `nominatim_proxy` 时 Nominatim 直连且不继承系统代理；配置 `${HTTPS_PROXY}` 或 HTTP(S) 代理 URL 后，只有 Nominatim 使用该代理，Tavily、Open-Meteo 和公开网页读取仍保持直连。显式代理环境变量缺失、地址非法或连接失败时，远程地点解析安全失败，不会绕过代理直连；本机时间、内置国家首都和已有地点缓存仍可用。代理地址及凭据不会提供给模型或写入运行数据。
+
+天气只使用 Open-Meteo 免费非商业接口，支持当前、未来 48 小时逐小时和未来 7 天逐日数据，每次查询最新结果、不缓存天气。地名歧义、地点缺失或过于精确的住址都会先要求用户补充，不根据好友身份、IP 或本机位置猜测。
+
+内置国家名称与首都坐标数据由 [mledoze/countries](https://github.com/mledoze/countries) 和 [GeoNames](https://www.geonames.org/) 生成，来源记录保存在随包发布的 `country_capitals.json` 中。
+
+每轮都会向模型注入本机当前日期时间和 IANA 时区。网页与地点缓存保存在当前项目的 `.mewcode/wechat.sqlite3`，不带好友或 Session 标识；网页缓存最长保留七天，地点缓存可长期复用并在过期后重新验证，天气不缓存。外部请求的原始参数、网页正文、搜索返回体和天气返回体不会写入好友 JSONL、`.mewcode/cache` 或长期记忆，好友档案只保留用户消息、最终回复及已净化的工具结构。使用网页、Nominatim 或天气后，回复末尾会追加当前回合实际来源或数据署名。
 
 启动前保持 Windows 桌面已解锁、微信主窗口可用且只运行一个已登录账号。先执行只读控件检查：
 

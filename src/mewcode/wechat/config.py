@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 
 from mewcode.config import ConfigError
@@ -11,6 +14,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "你没有任何本地工具，不能执行命令、读写文件或操作电脑。"
 )
 LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+ENV_REFERENCE_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+@dataclass(frozen=True)
+class WechatInfoConfig:
+    enabled: bool = False
+    tavily_api_key: str = field(default="", repr=False)
+    nominatim_user_agent: str = "MewCode-WeChat/0.1"
+    nominatim_proxy: str = field(default="", repr=False)
+    nominatim_proxy_configured: bool = False
 
 
 @dataclass(frozen=True)
@@ -22,6 +35,7 @@ class WechatConfig:
     task_timeout_seconds: float
     max_reply_chars: int
     log_level: str
+    info_tools: WechatInfoConfig = field(default_factory=WechatInfoConfig)
 
 
 def parse_wechat_config(
@@ -55,6 +69,7 @@ def parse_wechat_config(
         raise ConfigError(
             "wechat.log_level 必须是 DEBUG、INFO、WARNING、ERROR 或 CRITICAL"
         )
+    info_tools = _parse_info_tools(raw.get("info_tools", {}))
 
     if enabled:
         if not provider:
@@ -72,6 +87,44 @@ def parse_wechat_config(
         task_timeout_seconds=timeout,
         max_reply_chars=max_reply_chars,
         log_level=log_level,
+        info_tools=info_tools,
+    )
+
+
+def _parse_info_tools(raw: object) -> WechatInfoConfig:
+    if not isinstance(raw, dict):
+        raise ConfigError("wechat.info_tools 必须是对象")
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("wechat.info_tools.enabled 必须是布尔值")
+
+    api_key = raw.get("tavily_api_key", "")
+    if not isinstance(api_key, str):
+        raise ConfigError("wechat.info_tools.tavily_api_key 必须是字符串")
+    api_key = api_key.strip()
+    match = ENV_REFERENCE_RE.fullmatch(api_key)
+    if match is not None:
+        api_key = os.environ.get(match.group(1), "").strip()
+
+    user_agent = raw.get("nominatim_user_agent", "MewCode-WeChat/0.1")
+    if not isinstance(user_agent, str) or not user_agent.strip():
+        raise ConfigError("wechat.info_tools.nominatim_user_agent 必须是非空字符串")
+
+    proxy_configured = "nominatim_proxy" in raw
+    proxy = raw.get("nominatim_proxy", "")
+    if not isinstance(proxy, str):
+        raise ConfigError("wechat.info_tools.nominatim_proxy 必须是字符串")
+    proxy = proxy.strip()
+    match = ENV_REFERENCE_RE.fullmatch(proxy)
+    if match is not None:
+        proxy = os.environ.get(match.group(1), "").strip()
+
+    return WechatInfoConfig(
+        enabled=enabled,
+        tavily_api_key=api_key,
+        nominatim_user_agent=user_agent.strip(),
+        nominatim_proxy=proxy,
+        nominatim_proxy_configured=proxy_configured,
     )
 
 
@@ -96,4 +149,9 @@ def _positive_int(raw: dict[str, Any], key: str, default: int) -> int:
     return value
 
 
-__all__ = ["DEFAULT_SYSTEM_PROMPT", "WechatConfig", "parse_wechat_config"]
+__all__ = [
+    "DEFAULT_SYSTEM_PROMPT",
+    "WechatConfig",
+    "WechatInfoConfig",
+    "parse_wechat_config",
+]

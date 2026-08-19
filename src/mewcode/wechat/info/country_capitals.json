@@ -1,0 +1,3804 @@
+{
+  "sources": [
+    "https://github.com/mledoze/countries",
+    "https://www.geonames.org/"
+  ],
+  "countries": [
+    {
+      "code": "AD",
+      "names": [
+        "安道尔",
+        "Andorra",
+        "Principality of Andorra",
+        "AD",
+        "AND",
+        "020",
+        "Principat d'Andorra"
+      ],
+      "capital": "Andorra la Vella",
+      "latitude": 42.50779,
+      "longitude": 1.52109
+    },
+    {
+      "code": "AE",
+      "names": [
+        "阿拉伯联合酋长国",
+        "United Arab Emirates",
+        "AE",
+        "ARE",
+        "784",
+        "UAE",
+        "Emirates"
+      ],
+      "capital": "Abu Dhabi",
+      "latitude": 24.45118,
+      "longitude": 54.39696
+    },
+    {
+      "code": "AF",
+      "names": [
+        "阿富汗",
+        "Afghanistan",
+        "Islamic Republic of Afghanistan",
+        "AF",
+        "AFG",
+        "004",
+        "Afġānistān"
+      ],
+      "capital": "Kabul",
+      "latitude": 34.52813,
+      "longitude": 69.17233
+    },
+    {
+      "code": "AG",
+      "names": [
+        "安提瓜和巴布达",
+        "Antigua and Barbuda",
+        "AG",
+        "ATG",
+        "028",
+        "ANT"
+      ],
+      "capital": "Saint John's",
+      "latitude": 17.12096,
+      "longitude": -61.84329
+    },
+    {
+      "code": "AI",
+      "names": [
+        "安圭拉",
+        "Anguilla",
+        "AI",
+        "AIA",
+        "660"
+      ],
+      "capital": "The Valley",
+      "latitude": 18.21704,
+      "longitude": -63.05783
+    },
+    {
+      "code": "AL",
+      "names": [
+        "阿尔巴尼亚",
+        "Albania",
+        "Republic of Albania",
+        "AL",
+        "ALB",
+        "008",
+        "Shqipëri",
+        "Shqipëria",
+        "Shqipnia"
+      ],
+      "capital": "Tirana",
+      "latitude": 41.32744,
+      "longitude": 19.81866
+    },
+    {
+      "code": "AM",
+      "names": [
+        "亚美尼亚",
+        "Armenia",
+        "Republic of Armenia",
+        "AM",
+        "ARM",
+        "051",
+        "Hayastan",
+        "Հայաստանի Հանրապետություն"
+      ],
+      "capital": "Yerevan",
+      "latitude": 40.17765,
+      "longitude": 44.5126
+    },
+    {
+      "code": "AO",
+      "names": [
+        "安哥拉",
+        "Angola",
+        "Republic of Angola",
+        "AO",
+        "AGO",
+        "024",
+        "ANG",
+        "República de Angola",
+        "ʁɛpublika de an'ɡɔla"
+      ],
+      "capital": "Luanda",
+      "latitude": -8.83682,
+      "longitude": 13.23432
+    },
+    {
+      "code": "AR",
+      "names": [
+        "阿根廷",
+        "Argentina",
+        "Argentine Republic",
+        "AR",
+        "ARG",
+        "032",
+        "República Argentina"
+      ],
+      "capital": "Buenos Aires",
+      "latitude": -34.61315,
+      "longitude": -58.37723
+    },
+    {
+      "code": "AS",
+      "names": [
+        "美属萨摩亚",
+        "American Samoa",
+        "AS",
+        "ASM",
+        "016",
+        "ASA",
+        "Amerika Sāmoa",
+        "Amelika Sāmoa",
+        "Sāmoa Amelika"
+      ],
+      "capital": "Pago Pago",
+      "latitude": -14.27806,
+      "longitude": -170.7025
+    },
+    {
+      "code": "AT",
+      "names": [
+        "奥地利",
+        "Austria",
+        "Republic of Austria",
+        "AT",
+        "AUT",
+        "040",
+        "Osterreich",
+        "Oesterreich"
+      ],
+      "capital": "Vienna",
+      "latitude": 48.20849,
+      "longitude": 16.37208
+    },
+    {
+      "code": "AU",
+      "names": [
+        "澳大利亚",
+        "Australia",
+        "Commonwealth of Australia",
+        "AU",
+        "AUS",
+        "036"
+      ],
+      "capital": "Canberra",
+      "latitude": -35.28346,
+      "longitude": 149.12807
+    },
+    {
+      "code": "AW",
+      "names": [
+        "阿鲁巴",
+        "Aruba",
+        "AW",
+        "ABW",
+        "533",
+        "ARU"
+      ],
+      "capital": "Oranjestad",
+      "latitude": 12.52398,
+      "longitude": -70.02703
+    },
+    {
+      "code": "AX",
+      "names": [
+        "奥兰群岛",
+        "Åland Islands",
+        "AX",
+        "ALA",
+        "248",
+        "Aaland",
+        "Aland",
+        "Ahvenanmaa"
+      ],
+      "capital": "Mariehamn",
+      "latitude": 60.09726,
+      "longitude": 19.93481
+    },
+    {
+      "code": "AZ",
+      "names": [
+        "阿塞拜疆",
+        "Azerbaijan",
+        "Republic of Azerbaijan",
+        "AZ",
+        "AZE",
+        "031",
+        "Azərbaycan Respublikası"
+      ],
+      "capital": "Baku",
+      "latitude": 40.37767,
+      "longitude": 49.89201
+    },
+    {
+      "code": "BA",
+      "names": [
+        "波斯尼亚和黑塞哥维那",
+        "Bosnia and Herzegovina",
+        "BA",
+        "BIH",
+        "070",
+        "Bosnia-Herzegovina",
+        "Босна и Херцеговина"
+      ],
+      "capital": "Sarajevo",
+      "latitude": 43.84864,
+      "longitude": 18.35644
+    },
+    {
+      "code": "BB",
+      "names": [
+        "巴巴多斯",
+        "Barbados",
+        "BB",
+        "BRB",
+        "052",
+        "BAR"
+      ],
+      "capital": "Bridgetown",
+      "latitude": 13.10732,
+      "longitude": -59.62021
+    },
+    {
+      "code": "BD",
+      "names": [
+        "孟加拉国",
+        "Bangladesh",
+        "People's Republic of Bangladesh",
+        "BD",
+        "BGD",
+        "050",
+        "BAN",
+        "Gônôprôjatôntri Bangladesh"
+      ],
+      "capital": "Dhaka",
+      "latitude": 23.7104,
+      "longitude": 90.40744
+    },
+    {
+      "code": "BE",
+      "names": [
+        "比利时",
+        "Belgium",
+        "Kingdom of Belgium",
+        "BE",
+        "BEL",
+        "056",
+        "België",
+        "Belgie",
+        "Belgien",
+        "Belgique",
+        "Koninkrijk België",
+        "Royaume de Belgique",
+        "Königreich Belgien"
+      ],
+      "capital": "Brussels",
+      "latitude": 50.85045,
+      "longitude": 4.34878
+    },
+    {
+      "code": "BF",
+      "names": [
+        "布基纳法索",
+        "Burkina Faso",
+        "BF",
+        "BFA",
+        "854",
+        "BUR"
+      ],
+      "capital": "Ouagadougou",
+      "latitude": 12.36566,
+      "longitude": -1.53388
+    },
+    {
+      "code": "BG",
+      "names": [
+        "保加利亚",
+        "Bulgaria",
+        "Republic of Bulgaria",
+        "BG",
+        "BGR",
+        "100",
+        "BUL",
+        "Република България"
+      ],
+      "capital": "Sofia",
+      "latitude": 42.69751,
+      "longitude": 23.32415
+    },
+    {
+      "code": "BH",
+      "names": [
+        "巴林",
+        "Bahrain",
+        "Kingdom of Bahrain",
+        "BH",
+        "BHR",
+        "048",
+        "BRN",
+        "Mamlakat al-Baḥrayn"
+      ],
+      "capital": "Manama",
+      "latitude": 26.22787,
+      "longitude": 50.58565
+    },
+    {
+      "code": "BI",
+      "names": [
+        "布隆迪",
+        "Burundi",
+        "Republic of Burundi",
+        "BI",
+        "BDI",
+        "108",
+        "Republika y'Uburundi",
+        "République du Burundi"
+      ],
+      "capital": "Gitega",
+      "latitude": -3.42708,
+      "longitude": 29.92463
+    },
+    {
+      "code": "BJ",
+      "names": [
+        "贝宁",
+        "Benin",
+        "Republic of Benin",
+        "BJ",
+        "BEN",
+        "204",
+        "République du Bénin"
+      ],
+      "capital": "Porto-Novo",
+      "latitude": 6.49646,
+      "longitude": 2.60359
+    },
+    {
+      "code": "BL",
+      "names": [
+        "圣巴泰勒米",
+        "Saint Barthélemy",
+        "Collectivity of Saint Barthélemy",
+        "BL",
+        "BLM",
+        "652",
+        "St. Barthelemy",
+        "Collectivité de Saint-Barthélemy"
+      ],
+      "capital": "Gustavia",
+      "latitude": 17.89618,
+      "longitude": -62.84978
+    },
+    {
+      "code": "BM",
+      "names": [
+        "百慕大",
+        "Bermuda",
+        "BM",
+        "BMU",
+        "060",
+        "BER",
+        "The Islands of Bermuda",
+        "The Bermudas",
+        "Somers Isles"
+      ],
+      "capital": "Hamilton",
+      "latitude": 32.2949,
+      "longitude": -64.78303
+    },
+    {
+      "code": "BN",
+      "names": [
+        "文莱",
+        "Brunei",
+        "Nation of Brunei, Abode of Peace",
+        "BN",
+        "BRN",
+        "096",
+        "BRU",
+        "Brunei Darussalam",
+        "Nation of Brunei",
+        "the Abode of Peace"
+      ],
+      "capital": "Bandar Seri Begawan",
+      "latitude": 4.89035,
+      "longitude": 114.94006
+    },
+    {
+      "code": "BO",
+      "names": [
+        "玻利维亚",
+        "Bolivia",
+        "Plurinational State of Bolivia",
+        "BO",
+        "BOL",
+        "068",
+        "Buliwya",
+        "Wuliwya",
+        "Bolivia, Plurinational State of",
+        "Estado Plurinacional de Bolivia",
+        "Buliwya Mamallaqta",
+        "Wuliwya Suyu",
+        "Tetã Volívia"
+      ],
+      "capital": "Sucre",
+      "latitude": -19.03332,
+      "longitude": -65.26274
+    },
+    {
+      "code": "BQ",
+      "names": [
+        "荷蘭加勒比區",
+        "Caribbean Netherlands",
+        "Bonaire, Sint Eustatius and Saba",
+        "BQ",
+        "BES",
+        "535",
+        "BES islands",
+        "Bonaire Sint Eustatius and Saba"
+      ],
+      "capital": "Kralendijk",
+      "latitude": 12.15,
+      "longitude": -68.26667
+    },
+    {
+      "code": "BR",
+      "names": [
+        "巴西",
+        "Brazil",
+        "Federative Republic of Brazil",
+        "BR",
+        "BRA",
+        "076",
+        "Brasil",
+        "República Federativa do Brasil"
+      ],
+      "capital": "Brasília",
+      "latitude": -15.77972,
+      "longitude": -47.92972
+    },
+    {
+      "code": "BS",
+      "names": [
+        "巴哈马",
+        "Bahamas",
+        "Commonwealth of the Bahamas",
+        "BS",
+        "BHS",
+        "044",
+        "BAH"
+      ],
+      "capital": "Nassau",
+      "latitude": 25.05823,
+      "longitude": -77.34306
+    },
+    {
+      "code": "BT",
+      "names": [
+        "不丹",
+        "Bhutan",
+        "Kingdom of Bhutan",
+        "BT",
+        "BTN",
+        "064",
+        "BHU"
+      ],
+      "capital": "Thimphu",
+      "latitude": 27.46609,
+      "longitude": 89.64191
+    },
+    {
+      "code": "BW",
+      "names": [
+        "博茨瓦纳",
+        "Botswana",
+        "Republic of Botswana",
+        "BW",
+        "BWA",
+        "072",
+        "BOT",
+        "Lefatshe la Botswana"
+      ],
+      "capital": "Gaborone",
+      "latitude": -24.65451,
+      "longitude": 25.90859
+    },
+    {
+      "code": "BY",
+      "names": [
+        "白俄罗斯",
+        "Belarus",
+        "Republic of Belarus",
+        "BY",
+        "BLR",
+        "112",
+        "Bielaruś",
+        "Белоруссия",
+        "Республика Белоруссия"
+      ],
+      "capital": "Minsk",
+      "latitude": 53.90019,
+      "longitude": 27.56653
+    },
+    {
+      "code": "BZ",
+      "names": [
+        "伯利兹",
+        "Belize",
+        "BZ",
+        "BLZ",
+        "084",
+        "BIZ"
+      ],
+      "capital": "Belmopan",
+      "latitude": 17.25376,
+      "longitude": -88.76401
+    },
+    {
+      "code": "CA",
+      "names": [
+        "加拿大",
+        "Canada",
+        "CA",
+        "CAN",
+        "124"
+      ],
+      "capital": "Ottawa",
+      "latitude": 45.41117,
+      "longitude": -75.69812
+    },
+    {
+      "code": "CC",
+      "names": [
+        "科科斯",
+        "Cocos (Keeling) Islands",
+        "Territory of the Cocos (Keeling) Islands",
+        "CC",
+        "CCK",
+        "166",
+        "Keeling Islands",
+        "Cocos Islands"
+      ],
+      "capital": "West Island",
+      "latitude": -12.15681,
+      "longitude": 96.82251
+    },
+    {
+      "code": "CD",
+      "names": [
+        "民主刚果",
+        "DR Congo",
+        "Democratic Republic of the Congo",
+        "CD",
+        "COD",
+        "180",
+        "Congo-Kinshasa",
+        "Congo, the Democratic Republic of the",
+        "Democratic Republic of Congo",
+        "DRC"
+      ],
+      "capital": "Kinshasa",
+      "latitude": -4.32758,
+      "longitude": 15.31357
+    },
+    {
+      "code": "CF",
+      "names": [
+        "中非共和国",
+        "Central African Republic",
+        "CF",
+        "CAF",
+        "140",
+        "République centrafricaine"
+      ],
+      "capital": "Bangui",
+      "latitude": 4.36122,
+      "longitude": 18.55496
+    },
+    {
+      "code": "CG",
+      "names": [
+        "刚果",
+        "Congo",
+        "Republic of the Congo",
+        "CG",
+        "COG",
+        "178",
+        "CGO",
+        "Congo-Brazzaville"
+      ],
+      "capital": "Brazzaville",
+      "latitude": -4.26613,
+      "longitude": 15.28318
+    },
+    {
+      "code": "CH",
+      "names": [
+        "瑞士",
+        "Switzerland",
+        "Swiss Confederation",
+        "CH",
+        "CHE",
+        "756",
+        "SUI",
+        "Schweiz",
+        "Suisse",
+        "Svizzera",
+        "Svizra"
+      ],
+      "capital": "Bern",
+      "latitude": 46.94809,
+      "longitude": 7.44744
+    },
+    {
+      "code": "CI",
+      "names": [
+        "科特迪瓦",
+        "Ivory Coast",
+        "Republic of Côte d'Ivoire",
+        "CI",
+        "CIV",
+        "384",
+        "Côte d'Ivoire",
+        "Cote d'Ivoire",
+        "République de Côte d'Ivoire"
+      ],
+      "capital": "Yamoussoukro",
+      "latitude": 6.82055,
+      "longitude": -5.27674
+    },
+    {
+      "code": "CK",
+      "names": [
+        "库克群岛",
+        "Cook Islands",
+        "CK",
+        "COK",
+        "184",
+        "Kūki 'Āirani"
+      ],
+      "capital": "Avarua",
+      "latitude": -21.2075,
+      "longitude": -159.77546
+    },
+    {
+      "code": "CL",
+      "names": [
+        "智利",
+        "Chile",
+        "Republic of Chile",
+        "CL",
+        "CHL",
+        "152",
+        "CHI",
+        "República de Chile"
+      ],
+      "capital": "Santiago",
+      "latitude": -33.45694,
+      "longitude": -70.64827
+    },
+    {
+      "code": "CM",
+      "names": [
+        "喀麦隆",
+        "Cameroon",
+        "Republic of Cameroon",
+        "CM",
+        "CMR",
+        "120",
+        "République du Cameroun"
+      ],
+      "capital": "Yaoundé",
+      "latitude": 3.86667,
+      "longitude": 11.51667
+    },
+    {
+      "code": "CN",
+      "names": [
+        "中国",
+        "China",
+        "People's Republic of China",
+        "CN",
+        "CHN",
+        "156",
+        "Zhōngguó",
+        "Zhongguo",
+        "Zhonghua",
+        "中华人民共和国",
+        "Zhōnghuá Rénmín Gònghéguó"
+      ],
+      "capital": "Beijing",
+      "latitude": 39.9075,
+      "longitude": 116.39723
+    },
+    {
+      "code": "CO",
+      "names": [
+        "哥伦比亚",
+        "Colombia",
+        "Republic of Colombia",
+        "CO",
+        "COL",
+        "170",
+        "República de Colombia"
+      ],
+      "capital": "Bogotá",
+      "latitude": 4.60971,
+      "longitude": -74.08175
+    },
+    {
+      "code": "CR",
+      "names": [
+        "哥斯达黎加",
+        "Costa Rica",
+        "Republic of Costa Rica",
+        "CR",
+        "CRI",
+        "188",
+        "CRC",
+        "República de Costa Rica"
+      ],
+      "capital": "San José",
+      "latitude": 9.93388,
+      "longitude": -84.08489
+    },
+    {
+      "code": "CU",
+      "names": [
+        "古巴",
+        "Cuba",
+        "Republic of Cuba",
+        "CU",
+        "CUB",
+        "192",
+        "República de Cuba"
+      ],
+      "capital": "Havana",
+      "latitude": 23.13302,
+      "longitude": -82.38304
+    },
+    {
+      "code": "CV",
+      "names": [
+        "佛得角",
+        "Cape Verde",
+        "Republic of Cabo Verde",
+        "CV",
+        "CPV",
+        "132",
+        "República de Cabo Verde"
+      ],
+      "capital": "Praia",
+      "latitude": 14.93152,
+      "longitude": -23.51254
+    },
+    {
+      "code": "CW",
+      "names": [
+        "库拉索",
+        "Curaçao",
+        "Country of Curaçao",
+        "CW",
+        "CUW",
+        "531",
+        "Curacao",
+        "Kòrsou",
+        "Land Curaçao",
+        "Pais Kòrsou"
+      ],
+      "capital": "Willemstad",
+      "latitude": 12.12246,
+      "longitude": -68.88641
+    },
+    {
+      "code": "CX",
+      "names": [
+        "圣诞岛",
+        "Christmas Island",
+        "Territory of Christmas Island",
+        "CX",
+        "CXR",
+        "162"
+      ],
+      "capital": "Flying Fish Cove",
+      "latitude": -10.42172,
+      "longitude": 105.67912
+    },
+    {
+      "code": "CY",
+      "names": [
+        "塞浦路斯",
+        "Cyprus",
+        "Republic of Cyprus",
+        "CY",
+        "CYP",
+        "196",
+        "Kýpros",
+        "Kıbrıs",
+        "Κυπριακή Δημοκρατία",
+        "Kıbrıs Cumhuriyeti"
+      ],
+      "capital": "Nicosia",
+      "latitude": 35.17284,
+      "longitude": 33.35397
+    },
+    {
+      "code": "CZ",
+      "names": [
+        "捷克",
+        "Czechia",
+        "Czech Republic",
+        "CZ",
+        "CZE",
+        "203",
+        "Česká republika",
+        "Česko"
+      ],
+      "capital": "Prague",
+      "latitude": 50.08804,
+      "longitude": 14.42076
+    },
+    {
+      "code": "DE",
+      "names": [
+        "德国",
+        "Germany",
+        "Federal Republic of Germany",
+        "DE",
+        "DEU",
+        "276",
+        "GER",
+        "Bundesrepublik Deutschland"
+      ],
+      "capital": "Berlin",
+      "latitude": 52.52437,
+      "longitude": 13.41053
+    },
+    {
+      "code": "DJ",
+      "names": [
+        "吉布提",
+        "Djibouti",
+        "Republic of Djibouti",
+        "DJ",
+        "DJI",
+        "262",
+        "Jabuuti",
+        "Gabuuti",
+        "République de Djibouti",
+        "Gabuutih Ummuuno",
+        "Jamhuuriyadda Jabuuti"
+      ],
+      "capital": "Djibouti",
+      "latitude": 11.58901,
+      "longitude": 43.14503
+    },
+    {
+      "code": "DK",
+      "names": [
+        "丹麦",
+        "Denmark",
+        "Kingdom of Denmark",
+        "DK",
+        "DNK",
+        "208",
+        "DEN",
+        "Danmark",
+        "Kongeriget Danmark"
+      ],
+      "capital": "Copenhagen",
+      "latitude": 55.67594,
+      "longitude": 12.56553
+    },
+    {
+      "code": "DM",
+      "names": [
+        "多米尼加",
+        "Dominica",
+        "Commonwealth of Dominica",
+        "DM",
+        "DMA",
+        "212",
+        "Dominique",
+        "Wai‘tu kubuli"
+      ],
+      "capital": "Roseau",
+      "latitude": 15.30174,
+      "longitude": -61.38808
+    },
+    {
+      "code": "DO",
+      "names": [
+        "多明尼加",
+        "Dominican Republic",
+        "DO",
+        "DOM",
+        "214"
+      ],
+      "capital": "Santo Domingo",
+      "latitude": 18.47186,
+      "longitude": -69.89232
+    },
+    {
+      "code": "DZ",
+      "names": [
+        "阿尔及利亚",
+        "Algeria",
+        "People's Democratic Republic of Algeria",
+        "DZ",
+        "DZA",
+        "012",
+        "ALG",
+        "Dzayer",
+        "Algérie"
+      ],
+      "capital": "Algiers",
+      "latitude": 36.73225,
+      "longitude": 3.08746
+    },
+    {
+      "code": "EC",
+      "names": [
+        "厄瓜多尔",
+        "Ecuador",
+        "Republic of Ecuador",
+        "EC",
+        "ECU",
+        "218",
+        "República del Ecuador"
+      ],
+      "capital": "Quito",
+      "latitude": -0.22985,
+      "longitude": -78.52495
+    },
+    {
+      "code": "EE",
+      "names": [
+        "爱沙尼亚",
+        "Estonia",
+        "Republic of Estonia",
+        "EE",
+        "EST",
+        "233",
+        "Eesti",
+        "Eesti Vabariik"
+      ],
+      "capital": "Tallinn",
+      "latitude": 59.43696,
+      "longitude": 24.75353
+    },
+    {
+      "code": "EG",
+      "names": [
+        "埃及",
+        "Egypt",
+        "Arab Republic of Egypt",
+        "EG",
+        "EGY",
+        "818"
+      ],
+      "capital": "Cairo",
+      "latitude": 30.06263,
+      "longitude": 31.24967
+    },
+    {
+      "code": "EH",
+      "names": [
+        "西撒哈拉",
+        "Western Sahara",
+        "Sahrawi Arab Democratic Republic",
+        "EH",
+        "ESH",
+        "732",
+        "Taneẓroft Tutrimt"
+      ],
+      "capital": "El Aaiún",
+      "latitude": 27.1418,
+      "longitude": -13.18797
+    },
+    {
+      "code": "ER",
+      "names": [
+        "厄立特里亚",
+        "Eritrea",
+        "State of Eritrea",
+        "ER",
+        "ERI",
+        "232",
+        "ሃገረ ኤርትራ",
+        "Dawlat Iritriyá",
+        "ʾErtrā",
+        "Iritriyā"
+      ],
+      "capital": "Asmara",
+      "latitude": 15.33805,
+      "longitude": 38.93184
+    },
+    {
+      "code": "ES",
+      "names": [
+        "西班牙",
+        "Spain",
+        "Kingdom of Spain",
+        "ES",
+        "ESP",
+        "724",
+        "Reino de España"
+      ],
+      "capital": "Madrid",
+      "latitude": 40.4165,
+      "longitude": -3.70256
+    },
+    {
+      "code": "ET",
+      "names": [
+        "埃塞俄比亚",
+        "Ethiopia",
+        "Federal Democratic Republic of Ethiopia",
+        "ET",
+        "ETH",
+        "231",
+        "ʾĪtyōṗṗyā",
+        "የኢትዮጵያ ፌዴራላዊ ዲሞክራሲያዊ ሪፐብሊክ"
+      ],
+      "capital": "Addis Ababa",
+      "latitude": 9.02497,
+      "longitude": 38.74689
+    },
+    {
+      "code": "FI",
+      "names": [
+        "芬兰",
+        "Finland",
+        "Republic of Finland",
+        "FI",
+        "FIN",
+        "246",
+        "Suomi",
+        "Suomen tasavalta",
+        "Republiken Finland"
+      ],
+      "capital": "Helsinki",
+      "latitude": 60.16952,
+      "longitude": 24.93545
+    },
+    {
+      "code": "FJ",
+      "names": [
+        "斐济",
+        "Fiji",
+        "Republic of Fiji",
+        "FJ",
+        "FJI",
+        "242",
+        "FIJ",
+        "Viti",
+        "Matanitu ko Viti",
+        "Fijī Gaṇarājya"
+      ],
+      "capital": "Suva",
+      "latitude": -18.13683,
+      "longitude": 178.42531
+    },
+    {
+      "code": "FK",
+      "names": [
+        "福克兰群岛",
+        "Falkland Islands",
+        "FK",
+        "FLK",
+        "238",
+        "Islas Malvinas",
+        "Falkland Islands (Malvinas)"
+      ],
+      "capital": "Stanley",
+      "latitude": -51.69382,
+      "longitude": -57.85701
+    },
+    {
+      "code": "FM",
+      "names": [
+        "密克罗尼西亚",
+        "Micronesia",
+        "Federated States of Micronesia",
+        "FM",
+        "FSM",
+        "583",
+        "Micronesia, Federated States of"
+      ],
+      "capital": "Palikir",
+      "latitude": 6.92477,
+      "longitude": 158.16109
+    },
+    {
+      "code": "FO",
+      "names": [
+        "法罗群岛",
+        "Faroe Islands",
+        "FO",
+        "FRO",
+        "234",
+        "Føroyar",
+        "Færøerne",
+        "Faeroe Islands"
+      ],
+      "capital": "Tórshavn",
+      "latitude": 62.00973,
+      "longitude": -6.77164
+    },
+    {
+      "code": "FR",
+      "names": [
+        "法国",
+        "France",
+        "French Republic",
+        "FR",
+        "FRA",
+        "250",
+        "République française"
+      ],
+      "capital": "Paris",
+      "latitude": 48.85341,
+      "longitude": 2.3488
+    },
+    {
+      "code": "GA",
+      "names": [
+        "加蓬",
+        "Gabon",
+        "Gabonese Republic",
+        "GA",
+        "GAB",
+        "266",
+        "République Gabonaise"
+      ],
+      "capital": "Libreville",
+      "latitude": 0.39241,
+      "longitude": 9.45356
+    },
+    {
+      "code": "GB",
+      "names": [
+        "英国",
+        "United Kingdom",
+        "United Kingdom of Great Britain and Northern Ireland",
+        "GB",
+        "GBR",
+        "826",
+        "UK",
+        "Great Britain"
+      ],
+      "capital": "London",
+      "latitude": 51.50853,
+      "longitude": -0.12574
+    },
+    {
+      "code": "GD",
+      "names": [
+        "格林纳达",
+        "Grenada",
+        "GD",
+        "GRD",
+        "308",
+        "GRN"
+      ],
+      "capital": "St. George's",
+      "latitude": 12.05288,
+      "longitude": -61.75226
+    },
+    {
+      "code": "GE",
+      "names": [
+        "格鲁吉亚",
+        "Georgia",
+        "GE",
+        "GEO",
+        "268",
+        "Sakartvelo"
+      ],
+      "capital": "Tbilisi",
+      "latitude": 41.69143,
+      "longitude": 44.83412
+    },
+    {
+      "code": "GF",
+      "names": [
+        "法属圭亚那",
+        "French Guiana",
+        "Guiana",
+        "GF",
+        "GUF",
+        "254",
+        "Guyane"
+      ],
+      "capital": "Cayenne",
+      "latitude": 4.9381,
+      "longitude": -52.33455
+    },
+    {
+      "code": "GG",
+      "names": [
+        "根西岛",
+        "Guernsey",
+        "Bailiwick of Guernsey",
+        "GG",
+        "GGY",
+        "831",
+        "Bailliage de Guernesey"
+      ],
+      "capital": "St. Peter Port",
+      "latitude": 49.45981,
+      "longitude": -2.53527
+    },
+    {
+      "code": "GH",
+      "names": [
+        "加纳",
+        "Ghana",
+        "Republic of Ghana",
+        "GH",
+        "GHA",
+        "288"
+      ],
+      "capital": "Accra",
+      "latitude": 5.55602,
+      "longitude": -0.1969
+    },
+    {
+      "code": "GI",
+      "names": [
+        "直布罗陀",
+        "Gibraltar",
+        "GI",
+        "GIB",
+        "292"
+      ],
+      "capital": "Gibraltar",
+      "latitude": 36.14474,
+      "longitude": -5.35257
+    },
+    {
+      "code": "GL",
+      "names": [
+        "格陵兰",
+        "Greenland",
+        "GL",
+        "GRL",
+        "304",
+        "Grønland"
+      ],
+      "capital": "Nuuk",
+      "latitude": 64.18347,
+      "longitude": -51.72157
+    },
+    {
+      "code": "GM",
+      "names": [
+        "冈比亚",
+        "Gambia",
+        "Republic of the Gambia",
+        "GM",
+        "GMB",
+        "270",
+        "GAM"
+      ],
+      "capital": "Banjul",
+      "latitude": 13.45274,
+      "longitude": -16.57803
+    },
+    {
+      "code": "GN",
+      "names": [
+        "几内亚",
+        "Guinea",
+        "Republic of Guinea",
+        "GN",
+        "GIN",
+        "324",
+        "GUI",
+        "République de Guinée"
+      ],
+      "capital": "Conakry",
+      "latitude": 9.53795,
+      "longitude": -13.67729
+    },
+    {
+      "code": "GP",
+      "names": [
+        "瓜德罗普岛",
+        "Guadeloupe",
+        "GP",
+        "GLP",
+        "312",
+        "Gwadloup"
+      ],
+      "capital": "Basse-Terre",
+      "latitude": 15.99714,
+      "longitude": -61.73214
+    },
+    {
+      "code": "GQ",
+      "names": [
+        "赤道几内亚",
+        "Equatorial Guinea",
+        "Republic of Equatorial Guinea",
+        "GQ",
+        "GNQ",
+        "226",
+        "GEQ",
+        "República de Guinea Ecuatorial",
+        "République de Guinée équatoriale",
+        "República da Guiné Equatorial"
+      ],
+      "capital": "Malabo",
+      "latitude": 3.75578,
+      "longitude": 8.78166
+    },
+    {
+      "code": "GR",
+      "names": [
+        "希腊",
+        "Greece",
+        "Hellenic Republic",
+        "GR",
+        "GRC",
+        "300",
+        "GRE",
+        "Elláda",
+        "Ελληνική Δημοκρατία"
+      ],
+      "capital": "Athens",
+      "latitude": 37.98376,
+      "longitude": 23.72784
+    },
+    {
+      "code": "GS",
+      "names": [
+        "南乔治亚",
+        "South Georgia",
+        "South Georgia and the South Sandwich Islands",
+        "GS",
+        "SGS",
+        "239"
+      ],
+      "capital": "King Edward Point",
+      "latitude": -54.28111,
+      "longitude": -36.5092
+    },
+    {
+      "code": "GT",
+      "names": [
+        "危地马拉",
+        "Guatemala",
+        "Republic of Guatemala",
+        "GT",
+        "GTM",
+        "320",
+        "GUA"
+      ],
+      "capital": "Guatemala City",
+      "latitude": 14.64072,
+      "longitude": -90.51327
+    },
+    {
+      "code": "GU",
+      "names": [
+        "关岛",
+        "Guam",
+        "GU",
+        "GUM",
+        "316",
+        "Guåhån"
+      ],
+      "capital": "Hagåtña",
+      "latitude": 13.47567,
+      "longitude": 144.74886
+    },
+    {
+      "code": "GW",
+      "names": [
+        "几内亚比绍",
+        "Guinea-Bissau",
+        "Republic of Guinea-Bissau",
+        "GW",
+        "GNB",
+        "624",
+        "GBS",
+        "República da Guiné-Bissau"
+      ],
+      "capital": "Bissau",
+      "latitude": 11.86357,
+      "longitude": -15.59767
+    },
+    {
+      "code": "GY",
+      "names": [
+        "圭亚那",
+        "Guyana",
+        "Co-operative Republic of Guyana",
+        "GY",
+        "GUY",
+        "328"
+      ],
+      "capital": "Georgetown",
+      "latitude": 6.80448,
+      "longitude": -58.15527
+    },
+    {
+      "code": "HK",
+      "names": [
+        "香港",
+        "Hong Kong",
+        "Hong Kong Special Administrative Region of the People's Republic of China",
+        "HK",
+        "HKG",
+        "344"
+      ],
+      "capital": "City of Victoria",
+      "latitude": 22.28299,
+      "longitude": 114.15846
+    },
+    {
+      "code": "HN",
+      "names": [
+        "洪都拉斯",
+        "Honduras",
+        "Republic of Honduras",
+        "HN",
+        "HND",
+        "340",
+        "HON",
+        "República de Honduras"
+      ],
+      "capital": "Tegucigalpa",
+      "latitude": 14.0818,
+      "longitude": -87.20681
+    },
+    {
+      "code": "HR",
+      "names": [
+        "克罗地亚",
+        "Croatia",
+        "Republic of Croatia",
+        "HR",
+        "HRV",
+        "191",
+        "CRO",
+        "Hrvatska",
+        "Republika Hrvatska"
+      ],
+      "capital": "Zagreb",
+      "latitude": 45.81444,
+      "longitude": 15.97798
+    },
+    {
+      "code": "HT",
+      "names": [
+        "海地",
+        "Haiti",
+        "Republic of Haiti",
+        "HT",
+        "HTI",
+        "332",
+        "HAI",
+        "République d'Haïti",
+        "Repiblik Ayiti"
+      ],
+      "capital": "Port-au-Prince",
+      "latitude": 18.54349,
+      "longitude": -72.33881
+    },
+    {
+      "code": "HU",
+      "names": [
+        "匈牙利",
+        "Hungary",
+        "HU",
+        "HUN",
+        "348"
+      ],
+      "capital": "Budapest",
+      "latitude": 47.49835,
+      "longitude": 19.04045
+    },
+    {
+      "code": "ID",
+      "names": [
+        "印度尼西亚",
+        "Indonesia",
+        "Republic of Indonesia",
+        "ID",
+        "IDN",
+        "360",
+        "INA",
+        "Republik Indonesia"
+      ],
+      "capital": "Jakarta",
+      "latitude": -6.21462,
+      "longitude": 106.84513
+    },
+    {
+      "code": "IE",
+      "names": [
+        "爱尔兰",
+        "Ireland",
+        "Republic of Ireland",
+        "IE",
+        "IRL",
+        "372",
+        "Éire",
+        "Poblacht na hÉireann"
+      ],
+      "capital": "Dublin",
+      "latitude": 53.33306,
+      "longitude": -6.24889
+    },
+    {
+      "code": "IL",
+      "names": [
+        "以色列",
+        "Israel",
+        "State of Israel",
+        "IL",
+        "ISR",
+        "376",
+        "Medīnat Yisrā'el"
+      ],
+      "capital": "Jerusalem",
+      "latitude": 31.76904,
+      "longitude": 35.21633
+    },
+    {
+      "code": "IM",
+      "names": [
+        "马恩岛",
+        "Isle of Man",
+        "IM",
+        "IMN",
+        "833",
+        "Ellan Vannin",
+        "Mann",
+        "Mannin"
+      ],
+      "capital": "Douglas",
+      "latitude": 54.15,
+      "longitude": -4.48333
+    },
+    {
+      "code": "IN",
+      "names": [
+        "印度",
+        "India",
+        "Republic of India",
+        "IN",
+        "IND",
+        "356",
+        "Bhārat",
+        "Bharat Ganrajya",
+        "இந்தியா"
+      ],
+      "capital": "New Delhi",
+      "latitude": 28.62137,
+      "longitude": 77.2148
+    },
+    {
+      "code": "IQ",
+      "names": [
+        "伊拉克",
+        "Iraq",
+        "Republic of Iraq",
+        "IQ",
+        "IRQ",
+        "368",
+        "Jumhūriyyat al-‘Irāq"
+      ],
+      "capital": "Baghdad",
+      "latitude": 33.34058,
+      "longitude": 44.40088
+    },
+    {
+      "code": "IR",
+      "names": [
+        "伊朗",
+        "Iran",
+        "Islamic Republic of Iran",
+        "IR",
+        "IRN",
+        "364",
+        "IRI",
+        "Iran, Islamic Republic of",
+        "Jomhuri-ye Eslāmi-ye Irān"
+      ],
+      "capital": "Tehran",
+      "latitude": 35.69439,
+      "longitude": 51.42151
+    },
+    {
+      "code": "IS",
+      "names": [
+        "冰岛",
+        "Iceland",
+        "IS",
+        "ISL",
+        "352",
+        "Island",
+        "Republic of Iceland",
+        "Lýðveldið Ísland"
+      ],
+      "capital": "Reykjavik",
+      "latitude": 64.13548,
+      "longitude": -21.89541
+    },
+    {
+      "code": "IT",
+      "names": [
+        "意大利",
+        "Italy",
+        "Italian Republic",
+        "IT",
+        "ITA",
+        "380",
+        "Repubblica italiana"
+      ],
+      "capital": "Rome",
+      "latitude": 41.89193,
+      "longitude": 12.51133
+    },
+    {
+      "code": "JE",
+      "names": [
+        "泽西岛",
+        "Jersey",
+        "Bailiwick of Jersey",
+        "JE",
+        "JEY",
+        "832",
+        "Bailliage de Jersey",
+        "Bailliage dé Jèrri"
+      ],
+      "capital": "Saint Helier",
+      "latitude": 49.18804,
+      "longitude": -2.10491
+    },
+    {
+      "code": "JM",
+      "names": [
+        "牙买加",
+        "Jamaica",
+        "JM",
+        "JAM",
+        "388"
+      ],
+      "capital": "Kingston",
+      "latitude": 17.99702,
+      "longitude": -76.79358
+    },
+    {
+      "code": "JO",
+      "names": [
+        "约旦",
+        "Jordan",
+        "Hashemite Kingdom of Jordan",
+        "JO",
+        "JOR",
+        "400",
+        "al-Mamlakah al-Urdunīyah al-Hāshimīyah"
+      ],
+      "capital": "Amman",
+      "latitude": 31.95522,
+      "longitude": 35.94503
+    },
+    {
+      "code": "JP",
+      "names": [
+        "日本",
+        "Japan",
+        "JP",
+        "JPN",
+        "392",
+        "Nippon",
+        "Nihon"
+      ],
+      "capital": "Tokyo",
+      "latitude": 35.6895,
+      "longitude": 139.69171
+    },
+    {
+      "code": "KE",
+      "names": [
+        "肯尼亚",
+        "Kenya",
+        "Republic of Kenya",
+        "KE",
+        "KEN",
+        "404",
+        "Jamhuri ya Kenya"
+      ],
+      "capital": "Nairobi",
+      "latitude": -1.28333,
+      "longitude": 36.81667
+    },
+    {
+      "code": "KG",
+      "names": [
+        "吉尔吉斯斯坦",
+        "Kyrgyzstan",
+        "Kyrgyz Republic",
+        "KG",
+        "KGZ",
+        "417",
+        "Киргизия",
+        "Кыргыз Республикасы",
+        "Kyrgyz Respublikasy"
+      ],
+      "capital": "Bishkek",
+      "latitude": 42.87,
+      "longitude": 74.59
+    },
+    {
+      "code": "KH",
+      "names": [
+        "柬埔寨",
+        "Cambodia",
+        "Kingdom of Cambodia",
+        "KH",
+        "KHM",
+        "116",
+        "CAM"
+      ],
+      "capital": "Phnom Penh",
+      "latitude": 11.56245,
+      "longitude": 104.91601
+    },
+    {
+      "code": "KI",
+      "names": [
+        "基里巴斯",
+        "Kiribati",
+        "Independent and Sovereign Republic of Kiribati",
+        "KI",
+        "KIR",
+        "296",
+        "Republic of Kiribati",
+        "Ribaberiki Kiribati"
+      ],
+      "capital": "South Tarawa",
+      "latitude": 1.3278,
+      "longitude": 172.97696
+    },
+    {
+      "code": "KM",
+      "names": [
+        "科摩罗",
+        "Comoros",
+        "Union of the Comoros",
+        "KM",
+        "COM",
+        "174",
+        "Union des Comores",
+        "Udzima wa Komori",
+        "al-Ittiḥād al-Qumurī"
+      ],
+      "capital": "Moroni",
+      "latitude": -11.70216,
+      "longitude": 43.25506
+    },
+    {
+      "code": "KN",
+      "names": [
+        "圣基茨和尼维斯",
+        "Saint Kitts and Nevis",
+        "Federation of Saint Christopher and Nevis",
+        "KN",
+        "KNA",
+        "659",
+        "SKN"
+      ],
+      "capital": "Basseterre",
+      "latitude": 17.2955,
+      "longitude": -62.72499
+    },
+    {
+      "code": "KP",
+      "names": [
+        "朝鲜",
+        "North Korea",
+        "Democratic People's Republic of Korea",
+        "KP",
+        "PRK",
+        "408",
+        "DPRK",
+        "조선민주주의인민공화국",
+        "Chosŏn Minjujuŭi Inmin Konghwaguk",
+        "Korea, Democratic People's Republic of",
+        "북한",
+        "북조선"
+      ],
+      "capital": "Pyongyang",
+      "latitude": 39.03385,
+      "longitude": 125.75432
+    },
+    {
+      "code": "KR",
+      "names": [
+        "韩国",
+        "South Korea",
+        "Republic of Korea",
+        "KR",
+        "KOR",
+        "410",
+        "Korea, Republic of",
+        "남한",
+        "남조선"
+      ],
+      "capital": "Seoul",
+      "latitude": 37.566,
+      "longitude": 126.9784
+    },
+    {
+      "code": "KW",
+      "names": [
+        "科威特",
+        "Kuwait",
+        "State of Kuwait",
+        "KW",
+        "KWT",
+        "414",
+        "KUW",
+        "Dawlat al-Kuwait"
+      ],
+      "capital": "Kuwait City",
+      "latitude": 29.367,
+      "longitude": 47.97429
+    },
+    {
+      "code": "KY",
+      "names": [
+        "开曼群岛",
+        "Cayman Islands",
+        "KY",
+        "CYM",
+        "136",
+        "CAY"
+      ],
+      "capital": "George Town",
+      "latitude": 19.2866,
+      "longitude": -81.37436
+    },
+    {
+      "code": "KZ",
+      "names": [
+        "哈萨克斯坦",
+        "Kazakhstan",
+        "Republic of Kazakhstan",
+        "KZ",
+        "KAZ",
+        "398",
+        "Qazaqstan",
+        "Казахстан",
+        "Қазақстан Республикасы",
+        "Qazaqstan Respublïkası",
+        "Республика Казахстан",
+        "Respublika Kazakhstan"
+      ],
+      "capital": "Astana",
+      "latitude": 51.1801,
+      "longitude": 71.44598
+    },
+    {
+      "code": "LA",
+      "names": [
+        "老挝",
+        "Laos",
+        "Lao People's Democratic Republic",
+        "LA",
+        "LAO",
+        "418",
+        "Lao",
+        "Sathalanalat Paxathipatai Paxaxon Lao"
+      ],
+      "capital": "Vientiane",
+      "latitude": 17.96667,
+      "longitude": 102.6
+    },
+    {
+      "code": "LB",
+      "names": [
+        "黎巴嫩",
+        "Lebanon",
+        "Lebanese Republic",
+        "LB",
+        "LBN",
+        "422",
+        "Al-Jumhūrīyah Al-Libnānīyah"
+      ],
+      "capital": "Beirut",
+      "latitude": 33.89332,
+      "longitude": 35.50157
+    },
+    {
+      "code": "LC",
+      "names": [
+        "圣卢西亚",
+        "Saint Lucia",
+        "LC",
+        "LCA",
+        "662"
+      ],
+      "capital": "Castries",
+      "latitude": 13.9957,
+      "longitude": -61.00614
+    },
+    {
+      "code": "LI",
+      "names": [
+        "列支敦士登",
+        "Liechtenstein",
+        "Principality of Liechtenstein",
+        "LI",
+        "LIE",
+        "438",
+        "Fürstentum Liechtenstein"
+      ],
+      "capital": "Vaduz",
+      "latitude": 47.14151,
+      "longitude": 9.52154
+    },
+    {
+      "code": "LK",
+      "names": [
+        "斯里兰卡",
+        "Sri Lanka",
+        "Democratic Socialist Republic of Sri Lanka",
+        "LK",
+        "LKA",
+        "144",
+        "SRI",
+        "ilaṅkai"
+      ],
+      "capital": "Colombo",
+      "latitude": 6.93548,
+      "longitude": 79.84868
+    },
+    {
+      "code": "LR",
+      "names": [
+        "利比里亚",
+        "Liberia",
+        "Republic of Liberia",
+        "LR",
+        "LBR",
+        "430"
+      ],
+      "capital": "Monrovia",
+      "latitude": 6.30054,
+      "longitude": -10.7969
+    },
+    {
+      "code": "LS",
+      "names": [
+        "莱索托",
+        "Lesotho",
+        "Kingdom of Lesotho",
+        "LS",
+        "LSO",
+        "426",
+        "LES",
+        "Muso oa Lesotho"
+      ],
+      "capital": "Maseru",
+      "latitude": -29.31667,
+      "longitude": 27.48333
+    },
+    {
+      "code": "LT",
+      "names": [
+        "立陶宛",
+        "Lithuania",
+        "Republic of Lithuania",
+        "LT",
+        "LTU",
+        "440",
+        "Lietuvos Respublika"
+      ],
+      "capital": "Vilnius",
+      "latitude": 54.68916,
+      "longitude": 25.2798
+    },
+    {
+      "code": "LU",
+      "names": [
+        "卢森堡",
+        "Luxembourg",
+        "Grand Duchy of Luxembourg",
+        "LU",
+        "LUX",
+        "442",
+        "Grand-Duché de Luxembourg",
+        "Großherzogtum Luxemburg",
+        "Groussherzogtum Lëtzebuerg"
+      ],
+      "capital": "Luxembourg",
+      "latitude": 49.60982,
+      "longitude": 6.13268
+    },
+    {
+      "code": "LV",
+      "names": [
+        "拉脱维亚",
+        "Latvia",
+        "Republic of Latvia",
+        "LV",
+        "LVA",
+        "428",
+        "LAT",
+        "Latvijas Republika"
+      ],
+      "capital": "Riga",
+      "latitude": 56.946,
+      "longitude": 24.10589
+    },
+    {
+      "code": "LY",
+      "names": [
+        "利比亚",
+        "Libya",
+        "State of Libya",
+        "LY",
+        "LBY",
+        "434",
+        "LBA",
+        "Dawlat Libya"
+      ],
+      "capital": "Tripoli",
+      "latitude": 32.88743,
+      "longitude": 13.18733
+    },
+    {
+      "code": "MA",
+      "names": [
+        "摩洛哥",
+        "Morocco",
+        "Kingdom of Morocco",
+        "MA",
+        "MAR",
+        "504",
+        "Al-Mamlakah al-Maġribiyah"
+      ],
+      "capital": "Rabat",
+      "latitude": 34.01325,
+      "longitude": -6.83255
+    },
+    {
+      "code": "MC",
+      "names": [
+        "摩纳哥",
+        "Monaco",
+        "Principality of Monaco",
+        "MC",
+        "MCO",
+        "492",
+        "MON",
+        "Principauté de Monaco"
+      ],
+      "capital": "Monaco",
+      "latitude": 43.73718,
+      "longitude": 7.42145
+    },
+    {
+      "code": "MD",
+      "names": [
+        "摩尔多瓦",
+        "Moldova",
+        "Republic of Moldova",
+        "MD",
+        "MDA",
+        "498",
+        "Moldova, Republic of",
+        "Republica Moldova"
+      ],
+      "capital": "Chișinău",
+      "latitude": 47.00902,
+      "longitude": 28.85938
+    },
+    {
+      "code": "ME",
+      "names": [
+        "黑山",
+        "Montenegro",
+        "ME",
+        "MNE",
+        "499",
+        "Crna Gora"
+      ],
+      "capital": "Podgorica",
+      "latitude": 42.44124,
+      "longitude": 19.26309
+    },
+    {
+      "code": "MF",
+      "names": [
+        "圣马丁",
+        "Saint Martin",
+        "MF",
+        "MAF",
+        "663",
+        "Collectivity of Saint Martin",
+        "Collectivité de Saint-Martin",
+        "Saint Martin (French part)"
+      ],
+      "capital": "Marigot",
+      "latitude": 18.06819,
+      "longitude": -63.08302
+    },
+    {
+      "code": "MG",
+      "names": [
+        "马达加斯加",
+        "Madagascar",
+        "Republic of Madagascar",
+        "MG",
+        "MDG",
+        "450",
+        "MAD",
+        "Repoblikan'i Madagasikara",
+        "République de Madagascar"
+      ],
+      "capital": "Antananarivo",
+      "latitude": -18.91368,
+      "longitude": 47.53613
+    },
+    {
+      "code": "MH",
+      "names": [
+        "马绍尔群岛",
+        "Marshall Islands",
+        "Republic of the Marshall Islands",
+        "MH",
+        "MHL",
+        "584",
+        "Aolepān Aorōkin M̧ajeļ"
+      ],
+      "capital": "Majuro",
+      "latitude": 7.08971,
+      "longitude": 171.38027
+    },
+    {
+      "code": "MK",
+      "names": [
+        "北馬其頓",
+        "North Macedonia",
+        "Republic of North Macedonia",
+        "MK",
+        "MKD",
+        "807",
+        "The former Yugoslav Republic of Macedonia",
+        "Macedonia, The Former Yugoslav Republic of",
+        "Република Северна Македонија",
+        "Macedonia"
+      ],
+      "capital": "Skopje",
+      "latitude": 41.99646,
+      "longitude": 21.43141
+    },
+    {
+      "code": "ML",
+      "names": [
+        "马里",
+        "Mali",
+        "Republic of Mali",
+        "ML",
+        "MLI",
+        "466",
+        "République du Mali"
+      ],
+      "capital": "Bamako",
+      "latitude": 12.60915,
+      "longitude": -7.97522
+    },
+    {
+      "code": "MM",
+      "names": [
+        "缅甸",
+        "Myanmar",
+        "Republic of the Union of Myanmar",
+        "MM",
+        "MMR",
+        "104",
+        "MYA",
+        "Burma",
+        "Pyidaunzu Thanmăda Myăma Nainngandaw"
+      ],
+      "capital": "Naypyidaw",
+      "latitude": 19.745,
+      "longitude": 96.12972
+    },
+    {
+      "code": "MN",
+      "names": [
+        "蒙古",
+        "Mongolia",
+        "MN",
+        "MNG",
+        "496",
+        "MGL"
+      ],
+      "capital": "Ulan Bator",
+      "latitude": 47.90771,
+      "longitude": 106.88324
+    },
+    {
+      "code": "MP",
+      "names": [
+        "北马里亚纳群岛",
+        "Northern Mariana Islands",
+        "Commonwealth of the Northern Mariana Islands",
+        "MP",
+        "MNP",
+        "580",
+        "Sankattan Siha Na Islas Mariånas"
+      ],
+      "capital": "Saipan",
+      "latitude": 15.21233,
+      "longitude": 145.7545
+    },
+    {
+      "code": "MQ",
+      "names": [
+        "马提尼克",
+        "Martinique",
+        "MQ",
+        "MTQ",
+        "474"
+      ],
+      "capital": "Fort-de-France",
+      "latitude": 14.60365,
+      "longitude": -61.07418
+    },
+    {
+      "code": "MR",
+      "names": [
+        "毛里塔尼亚",
+        "Mauritania",
+        "Islamic Republic of Mauritania",
+        "MR",
+        "MRT",
+        "478",
+        "MTN",
+        "al-Jumhūriyyah al-ʾIslāmiyyah al-Mūrītāniyyah"
+      ],
+      "capital": "Nouakchott",
+      "latitude": 18.08581,
+      "longitude": -15.9785
+    },
+    {
+      "code": "MS",
+      "names": [
+        "蒙特塞拉特",
+        "Montserrat",
+        "MS",
+        "MSR",
+        "500"
+      ],
+      "capital": "Plymouth",
+      "latitude": 16.70555,
+      "longitude": -62.21292
+    },
+    {
+      "code": "MT",
+      "names": [
+        "马耳他",
+        "Malta",
+        "Republic of Malta",
+        "MT",
+        "MLT",
+        "470",
+        "Repubblika ta' Malta"
+      ],
+      "capital": "Valletta",
+      "latitude": 35.89968,
+      "longitude": 14.5148
+    },
+    {
+      "code": "MU",
+      "names": [
+        "毛里求斯",
+        "Mauritius",
+        "Republic of Mauritius",
+        "MU",
+        "MUS",
+        "480",
+        "MRI",
+        "République de Maurice"
+      ],
+      "capital": "Port Louis",
+      "latitude": -20.16194,
+      "longitude": 57.49889
+    },
+    {
+      "code": "MV",
+      "names": [
+        "马尔代夫",
+        "Maldives",
+        "Republic of the Maldives",
+        "MV",
+        "MDV",
+        "462",
+        "Maldive Islands",
+        "Dhivehi Raajjeyge Jumhooriyya"
+      ],
+      "capital": "Malé",
+      "latitude": 4.17521,
+      "longitude": 73.50916
+    },
+    {
+      "code": "MW",
+      "names": [
+        "马拉维",
+        "Malawi",
+        "Republic of Malawi",
+        "MW",
+        "MWI",
+        "454",
+        "MAW"
+      ],
+      "capital": "Lilongwe",
+      "latitude": -13.96692,
+      "longitude": 33.78725
+    },
+    {
+      "code": "MX",
+      "names": [
+        "墨西哥",
+        "Mexico",
+        "United Mexican States",
+        "MX",
+        "MEX",
+        "484",
+        "Mexicanos",
+        "Estados Unidos Mexicanos"
+      ],
+      "capital": "Mexico City",
+      "latitude": 19.42847,
+      "longitude": -99.12766
+    },
+    {
+      "code": "MY",
+      "names": [
+        "马来西亚",
+        "Malaysia",
+        "MY",
+        "MYS",
+        "458",
+        "MAS"
+      ],
+      "capital": "Kuala Lumpur",
+      "latitude": 3.1412,
+      "longitude": 101.68653
+    },
+    {
+      "code": "MZ",
+      "names": [
+        "莫桑比克",
+        "Mozambique",
+        "Republic of Mozambique",
+        "MZ",
+        "MOZ",
+        "508",
+        "República de Moçambique"
+      ],
+      "capital": "Maputo",
+      "latitude": -25.96553,
+      "longitude": 32.58322
+    },
+    {
+      "code": "NA",
+      "names": [
+        "纳米比亚",
+        "Namibia",
+        "Republic of Namibia",
+        "NA",
+        "NAM",
+        "516",
+        "Namibië"
+      ],
+      "capital": "Windhoek",
+      "latitude": -22.55941,
+      "longitude": 17.08323
+    },
+    {
+      "code": "NC",
+      "names": [
+        "新喀里多尼亚",
+        "New Caledonia",
+        "NC",
+        "NCL",
+        "540"
+      ],
+      "capital": "Nouméa",
+      "latitude": -22.27407,
+      "longitude": 166.44884
+    },
+    {
+      "code": "NE",
+      "names": [
+        "尼日尔",
+        "Niger",
+        "Republic of Niger",
+        "NE",
+        "NER",
+        "562",
+        "NIG",
+        "Nijar"
+      ],
+      "capital": "Niamey",
+      "latitude": 13.51366,
+      "longitude": 2.1098
+    },
+    {
+      "code": "NF",
+      "names": [
+        "诺福克岛",
+        "Norfolk Island",
+        "Territory of Norfolk Island",
+        "NF",
+        "NFK",
+        "574",
+        "Teratri of Norf'k Ailen"
+      ],
+      "capital": "Kingston",
+      "latitude": -29.05459,
+      "longitude": 167.96628
+    },
+    {
+      "code": "NG",
+      "names": [
+        "尼日利亚",
+        "Nigeria",
+        "Federal Republic of Nigeria",
+        "NG",
+        "NGA",
+        "566",
+        "NGR",
+        "Nijeriya",
+        "Naíjíríà"
+      ],
+      "capital": "Abuja",
+      "latitude": 9.05785,
+      "longitude": 7.49508
+    },
+    {
+      "code": "NI",
+      "names": [
+        "尼加拉瓜",
+        "Nicaragua",
+        "Republic of Nicaragua",
+        "NI",
+        "NIC",
+        "558",
+        "NCA",
+        "República de Nicaragua"
+      ],
+      "capital": "Managua",
+      "latitude": 12.13282,
+      "longitude": -86.2504
+    },
+    {
+      "code": "NL",
+      "names": [
+        "荷兰",
+        "Netherlands",
+        "Kingdom of the Netherlands",
+        "NL",
+        "NLD",
+        "528",
+        "NED",
+        "Holland",
+        "Nederland",
+        "The Netherlands"
+      ],
+      "capital": "Amsterdam",
+      "latitude": 52.37403,
+      "longitude": 4.88969
+    },
+    {
+      "code": "NO",
+      "names": [
+        "挪威",
+        "Norway",
+        "Kingdom of Norway",
+        "NO",
+        "NOR",
+        "578",
+        "Norge",
+        "Noreg",
+        "Kongeriket Norge",
+        "Kongeriket Noreg"
+      ],
+      "capital": "Oslo",
+      "latitude": 59.91273,
+      "longitude": 10.74609
+    },
+    {
+      "code": "NP",
+      "names": [
+        "尼泊尔",
+        "Nepal",
+        "Federal Democratic Republic of Nepal",
+        "NP",
+        "NPL",
+        "524",
+        "NEP",
+        "Loktāntrik Ganatantra Nepāl"
+      ],
+      "capital": "Kathmandu",
+      "latitude": 27.70169,
+      "longitude": 85.3206
+    },
+    {
+      "code": "NR",
+      "names": [
+        "瑙鲁",
+        "Nauru",
+        "Republic of Nauru",
+        "NR",
+        "NRU",
+        "520",
+        "Naoero",
+        "Pleasant Island",
+        "Ripublik Naoero"
+      ],
+      "capital": "Yaren",
+      "latitude": -0.55085,
+      "longitude": 166.9252
+    },
+    {
+      "code": "NU",
+      "names": [
+        "纽埃",
+        "Niue",
+        "NU",
+        "NIU",
+        "570"
+      ],
+      "capital": "Alofi",
+      "latitude": -19.05294,
+      "longitude": -169.91957
+    },
+    {
+      "code": "NZ",
+      "names": [
+        "新西兰",
+        "New Zealand",
+        "NZ",
+        "NZL",
+        "554",
+        "Aotearoa"
+      ],
+      "capital": "Wellington",
+      "latitude": -41.28664,
+      "longitude": 174.77557
+    },
+    {
+      "code": "OM",
+      "names": [
+        "阿曼",
+        "Oman",
+        "Sultanate of Oman",
+        "OM",
+        "OMN",
+        "512",
+        "OMA",
+        "Salṭanat ʻUmān"
+      ],
+      "capital": "Muscat",
+      "latitude": 23.58413,
+      "longitude": 58.40778
+    },
+    {
+      "code": "PA",
+      "names": [
+        "巴拿马",
+        "Panama",
+        "Republic of Panama",
+        "PA",
+        "PAN",
+        "591",
+        "República de Panamá"
+      ],
+      "capital": "Panama City",
+      "latitude": 8.9936,
+      "longitude": -79.51973
+    },
+    {
+      "code": "PE",
+      "names": [
+        "秘鲁",
+        "Peru",
+        "Republic of Peru",
+        "PE",
+        "PER",
+        "604",
+        "República del Perú"
+      ],
+      "capital": "Lima",
+      "latitude": -12.04318,
+      "longitude": -77.02824
+    },
+    {
+      "code": "PF",
+      "names": [
+        "法属波利尼西亚",
+        "French Polynesia",
+        "PF",
+        "PYF",
+        "258",
+        "Polynésie française",
+        "Pōrīnetia Farāni"
+      ],
+      "capital": "Papeetē",
+      "latitude": -17.5347,
+      "longitude": -149.56843
+    },
+    {
+      "code": "PG",
+      "names": [
+        "巴布亚新几内亚",
+        "Papua New Guinea",
+        "Independent State of Papua New Guinea",
+        "PG",
+        "PNG",
+        "598",
+        "Independen Stet bilong Papua Niugini"
+      ],
+      "capital": "Port Moresby",
+      "latitude": -9.47723,
+      "longitude": 147.15089
+    },
+    {
+      "code": "PH",
+      "names": [
+        "菲律宾",
+        "Philippines",
+        "Republic of the Philippines",
+        "PH",
+        "PHL",
+        "608",
+        "PHI",
+        "Repúblika ng Pilipinas"
+      ],
+      "capital": "Manila",
+      "latitude": 14.6042,
+      "longitude": 120.9822
+    },
+    {
+      "code": "PK",
+      "names": [
+        "巴基斯坦",
+        "Pakistan",
+        "Islamic Republic of Pakistan",
+        "PK",
+        "PAK",
+        "586",
+        "Pākistān",
+        "Islāmī Jumhūriya'eh Pākistān"
+      ],
+      "capital": "Islamabad",
+      "latitude": 33.72148,
+      "longitude": 73.04329
+    },
+    {
+      "code": "PL",
+      "names": [
+        "波兰",
+        "Poland",
+        "Republic of Poland",
+        "PL",
+        "POL",
+        "616",
+        "Rzeczpospolita Polska"
+      ],
+      "capital": "Warsaw",
+      "latitude": 52.22977,
+      "longitude": 21.01178
+    },
+    {
+      "code": "PM",
+      "names": [
+        "圣皮埃尔和密克隆",
+        "Saint Pierre and Miquelon",
+        "PM",
+        "SPM",
+        "666",
+        "Collectivité territoriale de Saint-Pierre-et-Miquelon"
+      ],
+      "capital": "Saint-Pierre",
+      "latitude": 46.77914,
+      "longitude": -56.1773
+    },
+    {
+      "code": "PN",
+      "names": [
+        "皮特凯恩群岛",
+        "Pitcairn Islands",
+        "Pitcairn Group of Islands",
+        "PN",
+        "PCN",
+        "612",
+        "Pitcairn",
+        "Pitcairn Henderson Ducie and Oeno Islands"
+      ],
+      "capital": "Adamstown",
+      "latitude": -25.06597,
+      "longitude": -130.10147
+    },
+    {
+      "code": "PR",
+      "names": [
+        "波多黎各",
+        "Puerto Rico",
+        "Commonwealth of Puerto Rico",
+        "PR",
+        "PRI",
+        "630",
+        "PUR",
+        "Estado Libre Asociado de Puerto Rico"
+      ],
+      "capital": "San Juan",
+      "latitude": 18.46633,
+      "longitude": -66.10572
+    },
+    {
+      "code": "PT",
+      "names": [
+        "葡萄牙",
+        "Portugal",
+        "Portuguese Republic",
+        "PT",
+        "PRT",
+        "620",
+        "POR",
+        "Portuguesa",
+        "República Portuguesa"
+      ],
+      "capital": "Lisbon",
+      "latitude": 38.72509,
+      "longitude": -9.1498
+    },
+    {
+      "code": "PW",
+      "names": [
+        "帕劳",
+        "Palau",
+        "Republic of Palau",
+        "PW",
+        "PLW",
+        "585",
+        "Beluu er a Belau"
+      ],
+      "capital": "Ngerulmud",
+      "latitude": 7.50077,
+      "longitude": 134.6238
+    },
+    {
+      "code": "PY",
+      "names": [
+        "巴拉圭",
+        "Paraguay",
+        "Republic of Paraguay",
+        "PY",
+        "PRY",
+        "600",
+        "PAR",
+        "República del Paraguay",
+        "Tetã Paraguái"
+      ],
+      "capital": "Asunción",
+      "latitude": -25.28646,
+      "longitude": -57.647
+    },
+    {
+      "code": "QA",
+      "names": [
+        "卡塔尔",
+        "Qatar",
+        "State of Qatar",
+        "QA",
+        "QAT",
+        "634",
+        "Dawlat Qaṭar"
+      ],
+      "capital": "Doha",
+      "latitude": 25.28545,
+      "longitude": 51.53096
+    },
+    {
+      "code": "RE",
+      "names": [
+        "留尼旺岛",
+        "Réunion",
+        "Réunion Island",
+        "RE",
+        "REU",
+        "638",
+        "Reunion"
+      ],
+      "capital": "Saint-Denis",
+      "latitude": -20.88231,
+      "longitude": 55.4504
+    },
+    {
+      "code": "RO",
+      "names": [
+        "罗马尼亚",
+        "Romania",
+        "RO",
+        "ROU",
+        "642",
+        "Rumania",
+        "Roumania",
+        "România"
+      ],
+      "capital": "Bucharest",
+      "latitude": 44.43225,
+      "longitude": 26.10626
+    },
+    {
+      "code": "RS",
+      "names": [
+        "塞尔维亚",
+        "Serbia",
+        "Republic of Serbia",
+        "RS",
+        "SRB",
+        "688",
+        "Srbija",
+        "Republika Srbija",
+        "Србија",
+        "Република Србија"
+      ],
+      "capital": "Belgrade",
+      "latitude": 44.80401,
+      "longitude": 20.46513
+    },
+    {
+      "code": "RU",
+      "names": [
+        "俄罗斯",
+        "Russia",
+        "Russian Federation",
+        "RU",
+        "RUS",
+        "643",
+        "Российская Федерация"
+      ],
+      "capital": "Moscow",
+      "latitude": 55.75204,
+      "longitude": 37.61781
+    },
+    {
+      "code": "RW",
+      "names": [
+        "卢旺达",
+        "Rwanda",
+        "Republic of Rwanda",
+        "RW",
+        "RWA",
+        "646",
+        "Repubulika y'u Rwanda",
+        "République du Rwanda"
+      ],
+      "capital": "Kigali",
+      "latitude": -1.94995,
+      "longitude": 30.05885
+    },
+    {
+      "code": "SA",
+      "names": [
+        "沙特阿拉伯",
+        "Saudi Arabia",
+        "Kingdom of Saudi Arabia",
+        "SA",
+        "SAU",
+        "682",
+        "KSA",
+        "Saudi",
+        "Al-Mamlakah al-‘Arabiyyah as-Su‘ūdiyyah"
+      ],
+      "capital": "Riyadh",
+      "latitude": 24.68773,
+      "longitude": 46.72185
+    },
+    {
+      "code": "SB",
+      "names": [
+        "所罗门群岛",
+        "Solomon Islands",
+        "SB",
+        "SLB",
+        "090",
+        "SOL"
+      ],
+      "capital": "Honiara",
+      "latitude": -9.43333,
+      "longitude": 159.95
+    },
+    {
+      "code": "SC",
+      "names": [
+        "塞舌尔",
+        "Seychelles",
+        "Republic of Seychelles",
+        "SC",
+        "SYC",
+        "690",
+        "SEY",
+        "Repiblik Sesel",
+        "République des Seychelles"
+      ],
+      "capital": "Victoria",
+      "latitude": -4.62001,
+      "longitude": 55.45501
+    },
+    {
+      "code": "SD",
+      "names": [
+        "苏丹",
+        "Sudan",
+        "Republic of the Sudan",
+        "SD",
+        "SDN",
+        "729",
+        "SUD",
+        "Jumhūrīyat as-Sūdān"
+      ],
+      "capital": "Khartoum",
+      "latitude": 15.55177,
+      "longitude": 32.53241
+    },
+    {
+      "code": "SE",
+      "names": [
+        "瑞典",
+        "Sweden",
+        "Kingdom of Sweden",
+        "SE",
+        "SWE",
+        "752",
+        "Konungariket Sverige"
+      ],
+      "capital": "Stockholm",
+      "latitude": 59.32938,
+      "longitude": 18.06871
+    },
+    {
+      "code": "SG",
+      "names": [
+        "新加坡",
+        "Singapore",
+        "Republic of Singapore",
+        "SG",
+        "SGP",
+        "702",
+        "Singapura",
+        "Republik Singapura",
+        "新加坡共和国"
+      ],
+      "capital": "Singapore",
+      "latitude": 1.28967,
+      "longitude": 103.85007
+    },
+    {
+      "code": "SH",
+      "names": [
+        "圣赫勒拿、阿森松和特里斯坦-达库尼亚",
+        "Saint Helena, Ascension and Tristan da Cunha",
+        "SH",
+        "SHN",
+        "654",
+        "Saint Helena",
+        "St. Helena, Ascension and Tristan da Cunha"
+      ],
+      "capital": "Jamestown",
+      "latitude": -15.92488,
+      "longitude": -5.71816
+    },
+    {
+      "code": "SI",
+      "names": [
+        "斯洛文尼亚",
+        "Slovenia",
+        "Republic of Slovenia",
+        "SI",
+        "SVN",
+        "705",
+        "SLO",
+        "Republika Slovenija"
+      ],
+      "capital": "Ljubljana",
+      "latitude": 46.05108,
+      "longitude": 14.50513
+    },
+    {
+      "code": "SJ",
+      "names": [
+        "斯瓦尔巴特",
+        "Svalbard and Jan Mayen",
+        "Svalbard og Jan Mayen",
+        "SJ",
+        "SJM",
+        "744",
+        "Svalbard and Jan Mayen Islands"
+      ],
+      "capital": "Longyearbyen",
+      "latitude": 78.22334,
+      "longitude": 15.64689
+    },
+    {
+      "code": "SK",
+      "names": [
+        "斯洛伐克",
+        "Slovakia",
+        "Slovak Republic",
+        "SK",
+        "SVK",
+        "703",
+        "Slovenská republika"
+      ],
+      "capital": "Bratislava",
+      "latitude": 48.14816,
+      "longitude": 17.10674
+    },
+    {
+      "code": "SL",
+      "names": [
+        "塞拉利昂",
+        "Sierra Leone",
+        "Republic of Sierra Leone",
+        "SL",
+        "SLE",
+        "694"
+      ],
+      "capital": "Freetown",
+      "latitude": 8.48714,
+      "longitude": -13.2356
+    },
+    {
+      "code": "SM",
+      "names": [
+        "圣马力诺",
+        "San Marino",
+        "Most Serene Republic of San Marino",
+        "SM",
+        "SMR",
+        "674",
+        "Republic of San Marino",
+        "Repubblica di San Marino"
+      ],
+      "capital": "City of San Marino",
+      "latitude": 43.93667,
+      "longitude": 12.44639
+    },
+    {
+      "code": "SN",
+      "names": [
+        "塞内加尔",
+        "Senegal",
+        "Republic of Senegal",
+        "SN",
+        "SEN",
+        "686",
+        "République du Sénégal"
+      ],
+      "capital": "Dakar",
+      "latitude": 14.6937,
+      "longitude": -17.44406
+    },
+    {
+      "code": "SO",
+      "names": [
+        "索马里",
+        "Somalia",
+        "Federal Republic of Somalia",
+        "SO",
+        "SOM",
+        "706",
+        "aṣ-Ṣūmāl",
+        "Jamhuuriyadda Federaalka Soomaaliya",
+        "Jumhūriyyat aṣ-Ṣūmāl al-Fiderāliyya"
+      ],
+      "capital": "Mogadishu",
+      "latitude": 2.03711,
+      "longitude": 45.34375
+    },
+    {
+      "code": "SR",
+      "names": [
+        "苏里南",
+        "Suriname",
+        "Republic of Suriname",
+        "SR",
+        "SUR",
+        "740",
+        "Sarnam",
+        "Sranangron",
+        "Republiek Suriname"
+      ],
+      "capital": "Paramaribo",
+      "latitude": 5.86638,
+      "longitude": -55.16682
+    },
+    {
+      "code": "SS",
+      "names": [
+        "南苏丹",
+        "South Sudan",
+        "Republic of South Sudan",
+        "SS",
+        "SSD",
+        "728"
+      ],
+      "capital": "Juba",
+      "latitude": 4.85165,
+      "longitude": 31.58247
+    },
+    {
+      "code": "ST",
+      "names": [
+        "圣多美和普林西比",
+        "São Tomé and Príncipe",
+        "Democratic Republic of São Tomé and Príncipe",
+        "ST",
+        "STP",
+        "678",
+        "Sao Tome and Principe",
+        "República Democrática de São Tomé e Príncipe"
+      ],
+      "capital": "São Tomé",
+      "latitude": 0.33756,
+      "longitude": 6.7299
+    },
+    {
+      "code": "SV",
+      "names": [
+        "萨尔瓦多",
+        "El Salvador",
+        "Republic of El Salvador",
+        "SV",
+        "SLV",
+        "222",
+        "ESA",
+        "República de El Salvador"
+      ],
+      "capital": "San Salvador",
+      "latitude": 13.68935,
+      "longitude": -89.18718
+    },
+    {
+      "code": "SX",
+      "names": [
+        "圣马丁岛",
+        "Sint Maarten",
+        "SX",
+        "SXM",
+        "534",
+        "Sint Maarten (Dutch part)"
+      ],
+      "capital": "Philipsburg",
+      "latitude": 18.026,
+      "longitude": -63.04582
+    },
+    {
+      "code": "SY",
+      "names": [
+        "叙利亚",
+        "Syria",
+        "Syrian Arab Republic",
+        "SY",
+        "SYR",
+        "760",
+        "Al-Jumhūrīyah Al-ʻArabīyah As-Sūrīyah"
+      ],
+      "capital": "Damascus",
+      "latitude": 33.5102,
+      "longitude": 36.29128
+    },
+    {
+      "code": "SZ",
+      "names": [
+        "斯威士兰",
+        "Eswatini",
+        "Kingdom of Eswatini",
+        "SZ",
+        "SWZ",
+        "748",
+        "Swaziland",
+        "weSwatini",
+        "Swatini",
+        "Ngwane",
+        "Umbuso weSwatini"
+      ],
+      "capital": "Lobamba",
+      "latitude": -26.31667,
+      "longitude": 31.13333
+    },
+    {
+      "code": "TC",
+      "names": [
+        "特克斯和凯科斯群岛",
+        "Turks and Caicos Islands",
+        "TC",
+        "TCA",
+        "796"
+      ],
+      "capital": "Cockburn Town",
+      "latitude": 21.46122,
+      "longitude": -71.14188
+    },
+    {
+      "code": "TD",
+      "names": [
+        "乍得",
+        "Chad",
+        "Republic of Chad",
+        "TD",
+        "TCD",
+        "148",
+        "CHA",
+        "Tchad",
+        "République du Tchad"
+      ],
+      "capital": "N'Djamena",
+      "latitude": 12.10672,
+      "longitude": 15.0444
+    },
+    {
+      "code": "TF",
+      "names": [
+        "法国南部和南极土地",
+        "French Southern and Antarctic Lands",
+        "Territory of the French Southern and Antarctic Lands",
+        "TF",
+        "ATF",
+        "260",
+        "French Southern Territories"
+      ],
+      "capital": "Port-aux-Français",
+      "latitude": -49.34916,
+      "longitude": 70.21937
+    },
+    {
+      "code": "TG",
+      "names": [
+        "多哥",
+        "Togo",
+        "Togolese Republic",
+        "TG",
+        "TGO",
+        "768",
+        "TOG",
+        "Togolese",
+        "République Togolaise"
+      ],
+      "capital": "Lomé",
+      "latitude": 6.12874,
+      "longitude": 1.22154
+    },
+    {
+      "code": "TH",
+      "names": [
+        "泰国",
+        "Thailand",
+        "Kingdom of Thailand",
+        "TH",
+        "THA",
+        "764",
+        "Prathet",
+        "Thai",
+        "ราชอาณาจักรไทย",
+        "Ratcha Anachak Thai"
+      ],
+      "capital": "Bangkok",
+      "latitude": 13.75398,
+      "longitude": 100.50144
+    },
+    {
+      "code": "TJ",
+      "names": [
+        "塔吉克斯坦",
+        "Tajikistan",
+        "Republic of Tajikistan",
+        "TJ",
+        "TJK",
+        "762",
+        "Toçikiston",
+        "Ҷумҳурии Тоҷикистон",
+        "Çumhuriyi Toçikiston"
+      ],
+      "capital": "Dushanbe",
+      "latitude": 38.53575,
+      "longitude": 68.77905
+    },
+    {
+      "code": "TL",
+      "names": [
+        "东帝汶",
+        "Timor-Leste",
+        "Democratic Republic of Timor-Leste",
+        "TL",
+        "TLS",
+        "626",
+        "East Timor",
+        "Timor",
+        "República Democrática de Timor-Leste",
+        "Repúblika Demokrátika Timór-Leste",
+        "Timór Lorosa'e",
+        "Timor Lorosae"
+      ],
+      "capital": "Dili",
+      "latitude": -8.55861,
+      "longitude": 125.57361
+    },
+    {
+      "code": "TM",
+      "names": [
+        "土库曼斯坦",
+        "Turkmenistan",
+        "TM",
+        "TKM",
+        "795"
+      ],
+      "capital": "Ashgabat",
+      "latitude": 37.95,
+      "longitude": 58.38333
+    },
+    {
+      "code": "TN",
+      "names": [
+        "突尼斯",
+        "Tunisia",
+        "Tunisian Republic",
+        "TN",
+        "TUN",
+        "788",
+        "Republic of Tunisia",
+        "al-Jumhūriyyah at-Tūnisiyyah"
+      ],
+      "capital": "Tunis",
+      "latitude": 36.81897,
+      "longitude": 10.16579
+    },
+    {
+      "code": "TO",
+      "names": [
+        "汤加",
+        "Tonga",
+        "Kingdom of Tonga",
+        "TO",
+        "TON",
+        "776",
+        "TGA"
+      ],
+      "capital": "Nuku'alofa",
+      "latitude": -21.13683,
+      "longitude": -175.20114
+    },
+    {
+      "code": "TR",
+      "names": [
+        "土耳其",
+        "Türkiye",
+        "Republic of Türkiye",
+        "TR",
+        "TUR",
+        "792",
+        "Turkiye",
+        "Republic of Turkey",
+        "Türkiye Cumhuriyeti"
+      ],
+      "capital": "Ankara",
+      "latitude": 39.91987,
+      "longitude": 32.85427
+    },
+    {
+      "code": "TT",
+      "names": [
+        "特立尼达和多巴哥",
+        "Trinidad and Tobago",
+        "Republic of Trinidad and Tobago",
+        "TT",
+        "TTO",
+        "780"
+      ],
+      "capital": "Port of Spain",
+      "latitude": 10.66668,
+      "longitude": -61.51889
+    },
+    {
+      "code": "TV",
+      "names": [
+        "图瓦卢",
+        "Tuvalu",
+        "TV",
+        "TUV",
+        "798"
+      ],
+      "capital": "Funafuti",
+      "latitude": -8.52425,
+      "longitude": 179.19417
+    },
+    {
+      "code": "TW",
+      "names": [
+        "台灣",
+        "Taiwan",
+        "Republic of China (Taiwan)",
+        "TW",
+        "TWN",
+        "158",
+        "TPE",
+        "Táiwān",
+        "Republic of China",
+        "中華民國",
+        "Zhōnghuá Mínguó",
+        "Chinese Taipei"
+      ],
+      "capital": "Taipei",
+      "latitude": 25.05306,
+      "longitude": 121.52639
+    },
+    {
+      "code": "TZ",
+      "names": [
+        "坦桑尼亚",
+        "Tanzania",
+        "United Republic of Tanzania",
+        "TZ",
+        "TZA",
+        "834",
+        "TAN",
+        "Tanzania, United Republic of",
+        "Jamhuri ya Muungano wa Tanzania"
+      ],
+      "capital": "Dodoma",
+      "latitude": -6.17221,
+      "longitude": 35.73947
+    },
+    {
+      "code": "UA",
+      "names": [
+        "乌克兰",
+        "Ukraine",
+        "UA",
+        "UKR",
+        "804",
+        "Ukrayina"
+      ],
+      "capital": "Kyiv",
+      "latitude": 50.45466,
+      "longitude": 30.5238
+    },
+    {
+      "code": "UG",
+      "names": [
+        "乌干达",
+        "Uganda",
+        "Republic of Uganda",
+        "UG",
+        "UGA",
+        "800",
+        "Jamhuri ya Uganda"
+      ],
+      "capital": "Kampala",
+      "latitude": 0.31628,
+      "longitude": 32.58219
+    },
+    {
+      "code": "US",
+      "names": [
+        "美国",
+        "United States",
+        "United States of America",
+        "US",
+        "USA",
+        "840",
+        "美利坚",
+        "America"
+      ],
+      "capital": "Washington D.C.",
+      "latitude": 38.89511,
+      "longitude": -77.03637
+    },
+    {
+      "code": "UY",
+      "names": [
+        "乌拉圭",
+        "Uruguay",
+        "Oriental Republic of Uruguay",
+        "UY",
+        "URY",
+        "858",
+        "URU",
+        "República Oriental del Uruguay"
+      ],
+      "capital": "Montevideo",
+      "latitude": -34.90328,
+      "longitude": -56.18816
+    },
+    {
+      "code": "UZ",
+      "names": [
+        "乌兹别克斯坦",
+        "Uzbekistan",
+        "Republic of Uzbekistan",
+        "UZ",
+        "UZB",
+        "860",
+        "O‘zbekiston Respublikasi",
+        "Ўзбекистон Республикаси"
+      ],
+      "capital": "Tashkent",
+      "latitude": 41.26465,
+      "longitude": 69.21627
+    },
+    {
+      "code": "VA",
+      "names": [
+        "梵蒂冈",
+        "Vatican City",
+        "Vatican City State",
+        "VA",
+        "VAT",
+        "336",
+        "Holy See (Vatican City State)",
+        "Vatican",
+        "Stato della Città del Vaticano"
+      ],
+      "capital": "Vatican City",
+      "latitude": 41.90268,
+      "longitude": 12.45414
+    },
+    {
+      "code": "VC",
+      "names": [
+        "圣文森特和格林纳丁斯",
+        "Saint Vincent and the Grenadines",
+        "VC",
+        "VCT",
+        "670",
+        "VIN"
+      ],
+      "capital": "Kingstown",
+      "latitude": 13.15527,
+      "longitude": -61.22742
+    },
+    {
+      "code": "VE",
+      "names": [
+        "委内瑞拉",
+        "Venezuela",
+        "Bolivarian Republic of Venezuela",
+        "VE",
+        "VEN",
+        "862",
+        "Venezuela, Bolivarian Republic of",
+        "República Bolivariana de Venezuela"
+      ],
+      "capital": "Caracas",
+      "latitude": 10.48801,
+      "longitude": -66.87919
+    },
+    {
+      "code": "VG",
+      "names": [
+        "英属维尔京群岛",
+        "British Virgin Islands",
+        "Virgin Islands",
+        "VG",
+        "VGB",
+        "092",
+        "IVB",
+        "Virgin Islands, British"
+      ],
+      "capital": "Road Town",
+      "latitude": 18.42693,
+      "longitude": -64.62079
+    },
+    {
+      "code": "VI",
+      "names": [
+        "美属维尔京群岛",
+        "United States Virgin Islands",
+        "Virgin Islands of the United States",
+        "VI",
+        "VIR",
+        "850",
+        "ISV",
+        "Virgin Islands, U.S."
+      ],
+      "capital": "Charlotte Amalie",
+      "latitude": 18.3419,
+      "longitude": -64.9307
+    },
+    {
+      "code": "VN",
+      "names": [
+        "越南",
+        "Vietnam",
+        "Socialist Republic of Vietnam",
+        "VN",
+        "VNM",
+        "704",
+        "VIE",
+        "Cộng hòa Xã hội chủ nghĩa Việt Nam",
+        "Viet Nam"
+      ],
+      "capital": "Hanoi",
+      "latitude": 21.0245,
+      "longitude": 105.84117
+    },
+    {
+      "code": "VU",
+      "names": [
+        "瓦努阿图",
+        "Vanuatu",
+        "Republic of Vanuatu",
+        "VU",
+        "VUT",
+        "548",
+        "VAN",
+        "Ripablik blong Vanuatu",
+        "République de Vanuatu"
+      ],
+      "capital": "Port Vila",
+      "latitude": -17.73648,
+      "longitude": 168.31366
+    },
+    {
+      "code": "WF",
+      "names": [
+        "瓦利斯和富图纳群岛",
+        "Wallis and Futuna",
+        "Territory of the Wallis and Futuna Islands",
+        "WF",
+        "WLF",
+        "876",
+        "Territoire des îles Wallis et Futuna"
+      ],
+      "capital": "Mata-Utu",
+      "latitude": -13.28163,
+      "longitude": -176.17453
+    },
+    {
+      "code": "WS",
+      "names": [
+        "萨摩亚",
+        "Samoa",
+        "Independent State of Samoa",
+        "WS",
+        "WSM",
+        "882",
+        "SAM",
+        "Malo Saʻoloto Tutoʻatasi o Sāmoa"
+      ],
+      "capital": "Apia",
+      "latitude": -13.83333,
+      "longitude": -171.76666
+    },
+    {
+      "code": "XK",
+      "names": [
+        "科索沃",
+        "Kosovo",
+        "Republic of Kosovo",
+        "XK",
+        "UNK",
+        "KOS",
+        "Република Косово"
+      ],
+      "capital": "Pristina",
+      "latitude": 42.67272,
+      "longitude": 21.16688
+    },
+    {
+      "code": "YE",
+      "names": [
+        "也门",
+        "Yemen",
+        "Republic of Yemen",
+        "YE",
+        "YEM",
+        "887",
+        "Yemeni Republic",
+        "al-Jumhūriyyah al-Yamaniyyah"
+      ],
+      "capital": "Sana'a",
+      "latitude": 15.35452,
+      "longitude": 44.20646
+    },
+    {
+      "code": "YT",
+      "names": [
+        "马约特",
+        "Mayotte",
+        "Department of Mayotte",
+        "YT",
+        "MYT",
+        "175",
+        "Département de Mayotte"
+      ],
+      "capital": "Mamoudzou",
+      "latitude": -12.78234,
+      "longitude": 45.22878
+    },
+    {
+      "code": "ZA",
+      "names": [
+        "南非",
+        "South Africa",
+        "Republic of South Africa",
+        "ZA",
+        "ZAF",
+        "710",
+        "RSA",
+        "Suid-Afrika"
+      ],
+      "capital": "Pretoria",
+      "latitude": -25.74486,
+      "longitude": 28.18783
+    },
+    {
+      "code": "ZM",
+      "names": [
+        "赞比亚",
+        "Zambia",
+        "Republic of Zambia",
+        "ZM",
+        "ZMB",
+        "894",
+        "ZAM"
+      ],
+      "capital": "Lusaka",
+      "latitude": -15.40669,
+      "longitude": 28.28713
+    },
+    {
+      "code": "ZW",
+      "names": [
+        "津巴布韦",
+        "Zimbabwe",
+        "Republic of Zimbabwe",
+        "ZW",
+        "ZWE",
+        "716",
+        "ZIM"
+      ],
+      "capital": "Harare",
+      "latitude": -17.82772,
+      "longitude": 31.05337
+    }
+  ]
+}

@@ -29,6 +29,8 @@ class ContextController:
         cache_dir: Path,
         context_window: int,
         hook_dispatcher: HookDispatcher | None = None,
+        *,
+        transient_tool_results: bool = False,
     ) -> None:
         self._provider = provider
         self._writer = writer
@@ -40,6 +42,7 @@ class ContextController:
         self._circuit_open = False
         self._staleness = ""
         self._hook_dispatcher = hook_dispatcher
+        self._transient_tool_results = transient_tool_results
 
     def set_hook_dispatcher(self, dispatcher: HookDispatcher | None) -> None:
         self._hook_dispatcher = dispatcher
@@ -52,7 +55,10 @@ class ContextController:
         environment: str = "",
     ) -> list[str]:
         notices: list[str] = []
-        updated, refs = self._artifacts.spill(conv.messages())
+        messages = conv.messages()
+        if self._transient_tool_results and messages and messages[-1].role == "tool":
+            return notices
+        updated, refs = self._artifacts.spill(messages)
         if refs:
             conv.replace_messages(updated)
             for ref in refs:

@@ -2,9 +2,34 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from .models import WechatDesktopEvent
+
+
+@dataclass(frozen=True)
+class CachedLocation:
+    key: str
+    value_json: str
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class CachedWebSearch:
+    key: str
+    query: str
+    result_json: str
+    fetched_at: float
+
+
+@dataclass(frozen=True)
+class CachedWebPage:
+    key: str
+    url: str
+    title: str
+    content: str
+    fetched_at: float
 
 
 class WechatStateStore:
@@ -26,6 +51,28 @@ class WechatStateStore:
             CREATE TABLE IF NOT EXISTS bindings (
                 conversation_name TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS location_cache (
+                cache_key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS web_search_cache (
+                cache_key TEXT PRIMARY KEY,
+                query TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                fetched_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS web_page_cache (
+                cache_key TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                fetched_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tavily_monthly_usage (
+                month_key TEXT PRIMARY KEY,
+                credits INTEGER NOT NULL CHECK (credits >= 0)
             );
             """
         )
@@ -84,9 +131,123 @@ class WechatStateStore:
             )
             self._connection.commit()
 
+    def get_location(self, cache_key: str) -> CachedLocation | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT value_json, updated_at FROM location_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        return CachedLocation(cache_key, str(row[0]), float(row[1])) if row else None
+
+    def put_location(self, record: CachedLocation) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT INTO location_cache(cache_key, value_json, updated_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET "
+                "value_json = excluded.value_json, updated_at = excluded.updated_at",
+                (record.key, record.value_json, record.updated_at),
+            )
+            self._connection.commit()
+
+    def get_web_search(self, cache_key: str) -> CachedWebSearch | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT query, result_json, fetched_at FROM web_search_cache "
+                "WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        return (
+            CachedWebSearch(cache_key, str(row[0]), str(row[1]), float(row[2]))
+            if row
+            else None
+        )
+
+    def put_web_search(self, record: CachedWebSearch) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT INTO web_search_cache(cache_key, query, result_json, fetched_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET "
+                "query = excluded.query, result_json = excluded.result_json, "
+                "fetched_at = excluded.fetched_at",
+                (record.key, record.query, record.result_json, record.fetched_at),
+            )
+            self._connection.commit()
+
+    def get_web_page(self, cache_key: str) -> CachedWebPage | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT url, title, content, fetched_at FROM web_page_cache "
+                "WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        return (
+            CachedWebPage(
+                cache_key, str(row[0]), str(row[1]), str(row[2]), float(row[3])
+            )
+            if row
+            else None
+        )
+
+    def put_web_page(self, record: CachedWebPage) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT INTO web_page_cache(cache_key, url, title, content, fetched_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET "
+                "url = excluded.url, title = excluded.title, "
+                "content = excluded.content, fetched_at = excluded.fetched_at",
+                (
+                    record.key,
+                    record.url,
+                    record.title,
+                    record.content,
+                    record.fetched_at,
+                ),
+            )
+            self._connection.commit()
+
+    def reserve_tavily_credit(self, month_key: str, limit: int = 1000) -> bool:
+        if not month_key or limit <= 0:
+            raise ValueError("month_key 不能为空且 limit 必须为正数")
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO tavily_monthly_usage(month_key, credits) "
+                "VALUES (?, 0)",
+                (month_key,),
+            )
+            cursor = self._connection.execute(
+                "UPDATE tavily_monthly_usage SET credits = credits + 1 "
+                "WHERE month_key = ? AND credits < ?",
+                (month_key, limit),
+            )
+            self._connection.commit()
+            return cursor.rowcount == 1
+
+    def tavily_credits(self, month_key: str) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT credits FROM tavily_monthly_usage WHERE month_key = ?",
+                (month_key,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def prune_info_cache(self, before: float) -> None:
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM web_search_cache WHERE fetched_at < ?", (before,)
+            )
+            self._connection.execute(
+                "DELETE FROM web_page_cache WHERE fetched_at < ?", (before,)
+            )
+            self._connection.commit()
+
     def close(self) -> None:
         with self._lock:
             self._connection.close()
 
 
-__all__ = ["WechatStateStore"]
+__all__ = [
+    "CachedLocation",
+    "CachedWebPage",
+    "CachedWebSearch",
+    "WechatStateStore",
+]

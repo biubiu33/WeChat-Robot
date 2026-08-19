@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from mewcode.config import ConfigError, _from_dict
-from mewcode.wechat.config import DEFAULT_SYSTEM_PROMPT, parse_wechat_config
+from mewcode.wechat.config import (
+    DEFAULT_SYSTEM_PROMPT,
+    WechatInfoConfig,
+    parse_wechat_config,
+)
 
 
 def provider() -> dict[str, object]:
@@ -81,3 +85,90 @@ def test_enabled_config_requires_known_provider_and_allowlist() -> None:
             {"enabled": True, "provider": "chat", "allowed_contacts": []},
             {"chat"},
         )
+
+
+def test_info_tools_default_off_and_expand_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert (
+        parse_wechat_config({"enabled": False}, {"chat"}).info_tools
+        == WechatInfoConfig()
+    )
+
+    monkeypatch.setenv("TAVILY_TEST_KEY", "private-key")
+    config = parse_wechat_config(
+        {
+            "enabled": False,
+            "info_tools": {
+                "enabled": True,
+                "tavily_api_key": "${TAVILY_TEST_KEY}",
+                "nominatim_user_agent": "MewCode-Test/1.0",
+            },
+        },
+        {"chat"},
+    )
+    assert config.info_tools == WechatInfoConfig(
+        True, "private-key", "MewCode-Test/1.0"
+    )
+
+    monkeypatch.delenv("TAVILY_TEST_KEY")
+    missing = parse_wechat_config(
+        {"enabled": False, "info_tools": {"tavily_api_key": "${TAVILY_TEST_KEY}"}},
+        {"chat"},
+    )
+    assert missing.info_tools.tavily_api_key == ""
+
+
+def test_nominatim_proxy_tracks_presence_and_expands_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    omitted = parse_wechat_config({"enabled": False}, {"chat"}).info_tools
+    assert omitted.nominatim_proxy == ""
+    assert omitted.nominatim_proxy_configured is False
+
+    literal = parse_wechat_config(
+        {
+            "enabled": False,
+            "info_tools": {"nominatim_proxy": "http://proxy.example:8080"},
+        },
+        {"chat"},
+    ).info_tools
+    assert literal.nominatim_proxy == "http://proxy.example:8080"
+    assert literal.nominatim_proxy_configured is True
+
+    monkeypatch.setenv("NOMINATIM_TEST_PROXY", "https://proxy.example:8443")
+    expanded = parse_wechat_config(
+        {
+            "enabled": False,
+            "info_tools": {"nominatim_proxy": "${NOMINATIM_TEST_PROXY}"},
+        },
+        {"chat"},
+    ).info_tools
+    assert expanded.nominatim_proxy == "https://proxy.example:8443"
+    assert expanded.nominatim_proxy_configured is True
+
+    monkeypatch.delenv("NOMINATIM_TEST_PROXY")
+    missing = parse_wechat_config(
+        {
+            "enabled": False,
+            "info_tools": {"nominatim_proxy": "${NOMINATIM_TEST_PROXY}"},
+        },
+        {"chat"},
+    ).info_tools
+    assert missing.nominatim_proxy == ""
+    assert missing.nominatim_proxy_configured is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ({"info_tools": []}, "info_tools 必须是对象"),
+        ({"info_tools": {"enabled": 1}}, "info_tools.enabled 必须是布尔值"),
+        ({"info_tools": {"tavily_api_key": 1}}, "tavily_api_key 必须是字符串"),
+        ({"info_tools": {"nominatim_user_agent": ""}}, "user_agent 必须是非空字符串"),
+        ({"info_tools": {"nominatim_proxy": 1}}, "nominatim_proxy 必须是字符串"),
+    ],
+)
+def test_info_tools_reject_invalid_config(raw: object, message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        parse_wechat_config(raw, {"chat"})
