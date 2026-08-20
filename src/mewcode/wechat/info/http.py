@@ -11,8 +11,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Protocol
-
+from typing import ClassVar, Protocol
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_PAGE_CHARS = 50_000
@@ -59,7 +58,7 @@ class HttpTransport(Protocol):
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
@@ -268,7 +267,14 @@ def extract_visible_text(body: bytes, content_type: str) -> ExtractedPage:
 
 
 class _VisibleTextParser(HTMLParser):
-    _SKIP_TAGS = {"script", "style", "noscript", "template", "svg", "form"}
+    _SKIP_TAGS: ClassVar[set[str]] = {
+        "script",
+        "style",
+        "noscript",
+        "template",
+        "svg",
+        "form",
+    }
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

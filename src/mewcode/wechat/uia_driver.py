@@ -98,10 +98,10 @@ class WechatUiaDriver:
         start = max(0, index - 4)
         suffix = "\0".join(item.text for item in candidates[start : index + 1])
         fingerprint = hashlib.sha256(
-            f"{row.name}\0{message.key}\0{suffix}".encode("utf-8")
+            f"{row.name}\0{message.key}\0{suffix}".encode()
         ).hexdigest()
         event_id = hashlib.sha256(
-            f"{row.key}\0{message.key}\0{fingerprint}".encode("utf-8")
+            f"{row.key}\0{message.key}\0{fingerprint}".encode()
         ).hexdigest()
         return WechatDesktopEvent(
             event_id=event_id,

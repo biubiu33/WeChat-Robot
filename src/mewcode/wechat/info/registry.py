@@ -29,7 +29,6 @@ from .web import (
     WebSearchTool,
 )
 
-
 WEB_URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 CONFIRM_RE = re.compile(r"(?:确认|同意|允许|继续搜索|yes|confirm)", re.IGNORECASE)
 
@@ -54,6 +53,12 @@ class SourceRef:
     kind: str
 
 
+@dataclass(frozen=True)
+class FinalizedInfoReply:
+    answer: str
+    source_message: str = ""
+
+
 @dataclass
 class SourceLedger:
     sources: list[SourceRef] = field(default_factory=list)
@@ -68,7 +73,7 @@ class SourceLedger:
         clean_title = " ".join(title.split())[:160] or clean_url
         self.sources.append(SourceRef(clean_title, clean_url, kind))
 
-    def finalize_reply(self, text: str) -> str:
+    def finalize_reply(self, text: str) -> FinalizedInfoReply:
         answer = text.strip()
         allowed = {item.url for item in self.sources[:3]}
 
@@ -86,7 +91,7 @@ class SourceLedger:
                 suffix.append(f"{index}. {source.title} — {source.url}")
         if self.osm_used:
             suffix.append("地点数据：OpenStreetMap")
-        return "\n\n".join([answer, "\n".join(suffix)]) if suffix else answer
+        return FinalizedInfoReply(answer, "\n".join(suffix))
 
 
 @dataclass(frozen=True)
@@ -100,7 +105,7 @@ class WechatInfoTurn:
     registry: Registry
     ledger: SourceLedger
 
-    def finalize_reply(self, text: str) -> str:
+    def finalize_reply(self, text: str) -> FinalizedInfoReply:
         return self.ledger.finalize_reply(text)
 
 
@@ -215,8 +220,9 @@ def new_wechat_info_turn(
 
 
 __all__ = [
-    "SourceLedger",
     "WECHAT_INFO_POLICY",
+    "FinalizedInfoReply",
+    "SourceLedger",
     "WechatInfoServices",
     "WechatInfoTurn",
     "new_wechat_info_turn",

@@ -7,7 +7,6 @@ import time
 import uuid
 from collections.abc import Callable, Iterable
 
-
 HSHELL_FLASH = 0x8006
 
 
@@ -66,7 +65,7 @@ class WindowsShellHook:
                 import win32gui
 
                 win32gui.PostMessage(self._hwnd, win32con.WM_CLOSE, 0, 0)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - best-effort window shutdown
                 pass
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=2.0)
@@ -101,7 +100,7 @@ class WindowsShellHook:
                     target = int(lparam or 0)
                     try:
                         _, process_id = win32process.GetWindowThreadProcessId(target)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - ignore stale native windows
                         process_id = 0
                     allowed = {int(value) for value in self._allowed_process_ids()}
                     if process_id in allowed:
@@ -144,7 +143,7 @@ class WindowsShellHook:
             if win32gui.IsWindow(hwnd):
                 win32gui.DestroyWindow(hwnd)
             win32gui.UnregisterClass(class_name, window_class.hInstance)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - report native hook startup failure
             self.error = str(exc)
             self._wake.set()
         finally:

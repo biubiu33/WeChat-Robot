@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from typing import Any
 
 from mewcode.config import ConfigError
-
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是通过微信与好友聊天的个人助手。简洁、自然地回答；"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 
@@ -42,22 +43,38 @@ class ConversationBinding:
     session_id: str
 
 
+@dataclass
+class PendingBatch:
+    events: list[WechatDesktopEvent]
+    revision: int
+    timer: asyncio.Task[None] | None = None
+    queued: bool = False
+
+
 @dataclass(frozen=True)
-class QueuedMessage:
-    event: WechatDesktopEvent
+class QueuedBatch:
+    conversation_name: str
+    events: tuple[WechatDesktopEvent, ...]
+    revision: int
     enqueued_at: float
+
+    @property
+    def text(self) -> str:
+        return "\n".join(event.text for event in self.events)
 
 
 @dataclass(frozen=True)
 class WechatReply:
-    conversation_name: str
-    text: str
+    messages: tuple[str, ...]
+    chat: bool
+    source_message: str = ""
 
 
 __all__ = [
     "ConversationBinding",
     "ConversationRow",
-    "QueuedMessage",
+    "PendingBatch",
+    "QueuedBatch",
     "VisibleMessage",
     "WechatDesktopEvent",
     "WechatReply",

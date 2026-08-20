@@ -26,7 +26,6 @@ from .http import (
     sanitize_url_secrets,
 )
 
-
 SEARCH_CACHE_SECONDS = 30 * 60
 LATEST_CACHE_SECONDS = 5 * 60
 PAGE_CACHE_SECONDS = 60 * 60
@@ -244,7 +243,7 @@ class WebSearchTool:
         last_error: TavilyError | None = None
         for attempt in range(2):
             if not self._store.reserve_tavily_credit(
-                datetime.fromtimestamp(now).strftime("%Y-%m")
+                datetime.fromtimestamp(now).strftime("%Y-%m")  # noqa: DTZ006
             ):
                 return error_result("monthly_limit", "本月网页搜索免费额度已用完")
             started = self._budget.begin_wait()
@@ -298,7 +297,7 @@ class WebSearchTool:
                     "untrusted_external_data": True,
                     "cached": cached,
                     "stale_fallback": stale,
-                    "fetched_at": datetime.fromtimestamp(fetched_at).isoformat(
+                    "fetched_at": datetime.fromtimestamp(fetched_at).isoformat(  # noqa: DTZ006
                         timespec="seconds"
                     ),
                     "results": items[:5],
@@ -410,7 +409,7 @@ class WebFetchTool:
                     "truncated": truncated,
                     "cached": cached,
                     "stale_fallback": stale,
-                    "fetched_at": datetime.fromtimestamp(record.fetched_at).isoformat(
+                    "fetched_at": datetime.fromtimestamp(record.fetched_at).isoformat(  # noqa: DTZ006
                         timespec="seconds"
                     ),
                 },

@@ -14,7 +14,7 @@ providers:
   #   base_url: https://api.openai.com/v1
   #   thinking: false
 
-# Windows 微信 4.1.12.55 本地机器人；联系人和 provider 请按实际情况修改。
+# Windows 微信 4.0.5.15 本地机器人；联系人和 provider 请按实际情况修改。
 # wechat:
 #   enabled: true
 #   provider: claude

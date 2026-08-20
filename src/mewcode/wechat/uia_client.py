@@ -11,8 +11,7 @@ from typing import Any
 
 from .models import ConversationRow, VisibleMessage
 
-
-SUPPORTED_WECHAT_VERSION = "4.1.12.55"
+SUPPORTED_WECHAT_VERSION = "4.0.5.15"
 MAIN_WINDOW_CLASS = "mmui::MainWindow"
 SESSION_LIST_ID = "session_list"
 MESSAGE_LIST_ID = "chat_message_list"
@@ -20,11 +19,10 @@ INPUT_ID = "chat_input_field"
 INPUT_CLASS = "mmui::ChatInputField"
 SEARCH_EDIT_CLASS = "mmui::XValidatorTextEdit"
 SEARCH_RESULT_CLASS = "mmui::SearchContentCellView"
-SEARCH_ITEM_PREFIX = "search_item_"
 CHAT_NAME_ID_SUFFIX = "current_chat_name_label"
 CHAT_COUNT_ID_SUFFIX = "current_chat_count_label"
 SESSION_ITEM_PREFIX = "session_item_"
-UNREAD_RE = re.compile(r"\[(\d+)条\]")
+UNREAD_RE = re.compile(r"(?:\[(\d+)\s*条\]|(\d+)\s*条未读)")
 
 
 class WechatUiaError(RuntimeError):
@@ -82,7 +80,11 @@ class WechatUiaClient:
                     int(value) for value in (control.GetRuntimeId() or ())
                 )
                 unread_match = UNREAD_RE.search(raw_name)
-                unread_count = int(unread_match.group(1)) if unread_match else 0
+                unread_count = (
+                    int(unread_match.group(1) or unread_match.group(2))
+                    if unread_match
+                    else 0
+                )
                 signature = hashlib.sha256(raw_name.encode("utf-8")).hexdigest()
                 rows.append(
                     ConversationRow(
@@ -100,12 +102,6 @@ class WechatUiaClient:
             if self.current_conversation_name() == row.name:
                 return
             window = self._main_window()
-            automation_id = f"{SESSION_ITEM_PREFIX}{row.name}"
-            matches = self._find_all(window, automation_id=automation_id)
-            if len(matches) != 1:
-                raise WechatUiaError(
-                    f"无法唯一定位微信会话 {row.name!r}，匹配到 {len(matches)} 项"
-                )
             self._open_conversation_with_search(window, row.name)
 
     def current_conversation_name(self) -> str:
@@ -203,7 +199,6 @@ class WechatUiaClient:
         self._auto.SendKeys("{Ctrl}a", waitTime=0.1)
         self._auto.SendKeys(conversation_name, interval=0.03, waitTime=0.3)
 
-        result_id = f"{SEARCH_ITEM_PREFIX}{conversation_name}"
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             focused = self._auto.GetFocusedControl()
@@ -214,9 +209,7 @@ class WechatUiaClient:
                 raise WechatUiaError("微信搜索内容与目标好友不一致")
             results = [
                 control
-                for control in self._find_all(
-                    self._main_window(), automation_id=result_id
-                )
+                for control in self._find_all(self._main_window())
                 if control.ClassName == SEARCH_RESULT_CLASS
                 and control.Name == conversation_name
             ]
@@ -353,6 +346,9 @@ class WechatUiaClient:
         automation_id = control.AutomationId or ""
         if automation_id.startswith(SESSION_ITEM_PREFIX):
             return automation_id.removeprefix(SESSION_ITEM_PREFIX).strip()
+        unread_match = UNREAD_RE.search(raw_name)
+        if unread_match:
+            return raw_name[: unread_match.start()].strip()
         return raw_name.splitlines()[0].strip() if raw_name else ""
 
     def _find_unique(self, root: Any, *, automation_id: str | None = None) -> Any:

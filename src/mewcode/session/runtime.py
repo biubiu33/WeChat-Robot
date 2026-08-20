@@ -8,8 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from mewcode.context import ContextController
-from mewcode.hook import HookSessionState
 from mewcode.conversation import Conversation
+from mewcode.hook import HookSessionState
 from mewcode.llm import Message, Provider
 from mewcode.llm.generation import generate_text
 
@@ -17,8 +17,7 @@ from .archive import ArchiveWriter
 from .paths import SessionPaths, create_session, paths_for
 from .repository import RestoredArchive
 
-
-MessageTransform = Callable[[Message], Message]
+MessageTransform = Callable[[Message], Message | None]
 MessageFilter = Callable[[list[Message]], list[Message]]
 
 
@@ -121,7 +120,8 @@ class SessionRuntime:
             if self._archive_message_transform is not None
             else message
         )
-        self.writer.append_message(archived, model=self.provider.model)
+        if archived is not None:
+            self.writer.append_message(archived, model=self.provider.model)
         if message.role == "user" and self._enable_title and not self._title_started:
             self._title_started = True
             self._title_task = asyncio.create_task(
@@ -137,5 +137,5 @@ class SessionRuntime:
                 prompt=f"为这条用户消息生成不超过 20 字的标题：{first_message}",
             )
             self.writer.append_title(" ".join(title.split())[:50] or fallback)
-        except Exception:
+        except Exception:  # noqa: BLE001 - title generation must never break a session
             self.writer.append_title(fallback)

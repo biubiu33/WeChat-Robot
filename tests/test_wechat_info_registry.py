@@ -133,10 +133,10 @@ def test_source_ledger_canonicalizes_sources_and_attribution() -> None:
         "Answer with https://hallucinated.example and https://example.com/0?view=full"
     )
 
-    assert "hallucinated.example" not in result
-    assert result.count(" — https://") == 3
-    assert "token=" not in result
-    assert result.endswith("地点数据：OpenStreetMap")
+    assert "hallucinated.example" not in result.answer
+    assert result.source_message.count(" — https://") == 3
+    assert "token=" not in result.source_message
+    assert result.source_message.endswith("地点数据：OpenStreetMap")
 
 
 @async_test
@@ -296,7 +296,15 @@ async def test_runtime_registers_only_three_tools_and_never_archives_raw_tool_da
         info_services=services,
     )
 
-    assert await runtime.reply("A", "what time", asyncio.Event()) == "It is now"
+    statuses: list[str] = []
+
+    async def record_status(status: str) -> None:
+        statuses.append(status)
+
+    reply = await runtime.reply("A", "what time", asyncio.Event(), record_status)
+    assert reply.messages == ("It is now",)
+    assert statuses == ["我看一下时间。"]
+    runtime.record_delivery("A", reply.messages)
 
     names = {tool.name for tool in provider.requests[0].tools}
     assert names == {"get_current_time", "web_search", "web_fetch"}
@@ -334,7 +342,8 @@ async def test_runtime_registers_only_three_tools_and_never_archives_raw_tool_da
         provider=resumed_provider,
         info_services=services,
     )
-    assert await resumed.reply("A", "next", asyncio.Event()) == "continued"
+    continued = await resumed.reply("A", "next", asyncio.Event())
+    assert continued.messages == ("continued",)
     assert [message.content for message in resumed_provider.requests[0].messages] == [
         "what time",
         "It is now",
@@ -375,9 +384,9 @@ async def test_weather_question_uses_web_search_and_appends_source(
         "weather-test-friend", "南昌明天天气怎么样", asyncio.Event()
     )
 
-    assert "南昌明天预计多云" in reply
-    assert "来源：" in reply
-    assert "https://weather.example/nanchang" in reply
+    assert reply.messages == ("南昌明天预计多云，具体以最新预报为准。",)
+    assert reply.source_message.startswith("来源：")
+    assert "https://weather.example/nanchang" in reply.source_message
     assert len(transport.requests) == 1
     request_body = json.loads(transport.requests[0].body or b"{}")
     assert request_body["query"] == "南昌 明天 天气"

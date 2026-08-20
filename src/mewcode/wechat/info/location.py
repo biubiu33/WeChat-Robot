@@ -23,7 +23,6 @@ from mewcode.wechat.store import CachedLocation, WechatStateStore
 
 from .http import HttpError, HttpRequest, HttpTransport, UrllibTransport
 
-
 LOCATION_CACHE_SECONDS = 30 * 24 * 60 * 60
 PRECISE_ADDRESS_RE = re.compile(
     r"(?:\d{5,}|\d+\s*(?:号|栋|室|单元|弄|巷|路|街|avenue|ave\.?|street|st\.?|road|rd\.?))",
@@ -256,7 +255,7 @@ class CurrentTimeTool:
             host_time = datetime.fromtimestamp(
                 timestamp, ZoneInfo(get_localzone_name())
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - timezone databases can fail at runtime
             return error_result("timezone_error", "无法计算该地点的当前时间")
         offset = local_time.utcoffset()
         dst = local_time.dst()

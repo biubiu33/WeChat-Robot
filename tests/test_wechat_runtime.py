@@ -4,15 +4,23 @@ import asyncio
 from collections.abc import AsyncIterator
 from functools import wraps
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from mewcode.agent import Event, Phase, ToolEvent
 from mewcode.config import ProviderConfig
+from mewcode.conversation import Conversation
 from mewcode.llm import Message, Request, StreamEvent, ToolCall, ToolResult
 from mewcode.wechat.config import WechatConfig
 from mewcode.wechat.runtime import (
+    BUBBLE_DELIMITER,
     WechatAgentRuntime,
     WechatTurnCancelled,
+    _build_wechat_reply,
+    _chat_delay,
+    _split_professional_text,
+    _to_wechat_plain_text,
     _wechat_history_messages,
 )
 from mewcode.wechat.store import WechatStateStore
@@ -48,6 +56,14 @@ class BlockingProvider(FakeProvider):
         self.requests.append(request)
         await asyncio.sleep(10)
         yield StreamEvent(text="late")
+
+
+class StageAgent:
+    async def run(self, conversation, mode, cancel):
+        del mode, cancel
+        for name in ("web_search", "web_fetch", "get_current_time"):
+            yield Event(tool=ToolEvent(name, phase=Phase.START))
+        conversation.add_assistant("完成")
 
 
 def configs(timeout: float = 2.0) -> tuple[ProviderConfig, WechatConfig]:
@@ -91,14 +107,19 @@ async def test_runtime_isolates_and_restores_friend_sessions(tmp_path: Path) -> 
         tmp_path, provider_config, wechat_config, store, provider=provider
     )
 
-    assert await runtime.reply("A", "南昌今天天气", asyncio.Event()) == "南昌今天多云"
-    assert await runtime.reply("B", "那明天呢", asyncio.Event()) == "请告诉我城市"
+    first = await runtime.reply("A", "南昌今天天气", asyncio.Event())
+    assert first.messages == ("南昌今天多云",)
+    runtime.record_delivery("A", first.messages)
+    second = await runtime.reply("B", "那明天呢", asyncio.Event())
+    assert second.messages == ("请告诉我城市",)
+    runtime.record_delivery("B", second.messages)
     assert store.get_session_id("A") != store.get_session_id("B")
 
     restored = WechatAgentRuntime(
         tmp_path, provider_config, wechat_config, store, provider=provider
     )
-    assert await restored.reply("A", "那明天呢", asyncio.Event()) == "南昌明天有雨"
+    third = await restored.reply("A", "那明天呢", asyncio.Event())
+    assert third.messages == ("南昌明天有雨",)
     assert [message.content for message in provider.requests[-1].messages] == [
         "南昌今天天气",
         "南昌今天多云",
@@ -123,9 +144,127 @@ async def test_runtime_exposes_no_tools_or_local_environment(tmp_path: Path) -> 
 
     request = provider.requests[0]
     assert request.tools == []
-    assert request.system.stable == "安全微信助手"
+    assert request.system.stable.startswith("安全微信助手")
+    assert BUBBLE_DELIMITER in request.system.stable
+    assert "Markdown" in request.system.stable
     assert "不能访问本地环境" in request.system.environment
     assert str(tmp_path) not in request.system.environment
+    store.close()
+
+
+def test_reply_protocol_caps_bubbles_and_preserves_professional_backslashes() -> None:
+    reply = _build_wechat_reply(
+        BUBBLE_DELIMITER.join(str(index) for index in range(9)),
+        max_chars=1500,
+    )
+    assert reply.chat is True
+    assert reply.messages == ("0", "1", "2", "3", "4", "5", "6\n7\n8")
+
+    professional = _build_wechat_reply(
+        r"路径 C:\Users\name，正则 \d+\.\d+。",
+        max_chars=1500,
+    )
+    assert professional.chat is False
+    assert professional.messages == (r"路径 C:\Users\name，正则 \d+\.\d+。",)
+
+
+def test_reply_protocol_ignores_empty_bubbles_and_forces_web_professional() -> None:
+    reply = _build_wechat_reply(
+        f"你好{BUBBLE_DELIMITER}  {BUBBLE_DELIMITER}再见",
+        max_chars=1500,
+    )
+    assert reply.messages == ("你好", "再见")
+    assert reply.chat is True
+
+    web_reply = _build_wechat_reply(
+        f"摘要一{BUBBLE_DELIMITER}摘要二",
+        max_chars=1500,
+        force_professional=True,
+    )
+    assert web_reply.messages == ("摘要一\n摘要二",)
+    assert web_reply.chat is False
+
+
+def test_plain_text_removes_markdown_wrappers_but_preserves_code() -> None:
+    fence = "`" * 3
+    source = (
+        "## 几点提醒\n**正文**和[来源](https://example.com)\n"
+        f"{fence}python\n# comment\ndef power(x):\n    return x ** 2\n{fence}"
+    )
+    result = _to_wechat_plain_text(source)
+
+    assert "##" not in result
+    assert "**正文**" not in result
+    assert "正文和来源：https://example.com" in result
+    assert "# comment" in result
+    assert "return x ** 2" in result
+    assert fence not in result
+
+
+def test_professional_split_and_chat_delay_bounds() -> None:
+    text = "第一段。\n\n" + "第二段很长。" * 20
+    chunks = _split_professional_text(text, 30)
+
+    assert len(chunks) > 2
+    assert all(len(chunk) <= 30 for chunk in chunks)
+    assert _chat_delay("短", 0.04) == 0.4
+    assert _chat_delay("长" * 100, 0.04) == 2.0
+    assert _chat_delay("稍长一些", 0.04) >= _chat_delay("短", 0.04)
+
+    many_chunks = _split_professional_text("A" * 81, 10)
+    assert len(many_chunks) == 9
+    assert "".join(many_chunks) == "A" * 81
+
+
+@async_test
+async def test_only_delivered_bubbles_are_restored(tmp_path: Path) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    provider = FakeProvider(["第一条<|bubble|>未发送第二条", "下一轮"])
+    runtime = WechatAgentRuntime(
+        tmp_path, provider_config, wechat_config, store, provider=provider
+    )
+
+    reply = await runtime.reply("A", "开始", asyncio.Event())
+    assert reply.messages == ("第一条", "未发送第二条")
+    runtime.record_delivery("A", [reply.messages[0]])
+    await runtime.reply("A", "继续", asyncio.Event())
+
+    assert [message.content for message in provider.requests[-1].messages] == [
+        "开始",
+        "第一条",
+        "继续",
+    ]
+    store.close()
+
+
+@async_test
+async def test_tool_stages_are_deduplicated_by_purpose(tmp_path: Path) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    runtime = WechatAgentRuntime(
+        tmp_path,
+        provider_config,
+        wechat_config,
+        store,
+        provider=FakeProvider([]),
+    )
+    statuses: list[str] = []
+
+    async def record(status: str) -> None:
+        statuses.append(status)
+
+    completion, used_web = await runtime._run_agent(
+        StageAgent(),
+        SimpleNamespace(conversation=Conversation()),
+        "查询",
+        asyncio.Event(),
+        record,
+    )
+
+    assert completion.text == "完成"
+    assert used_web is True
+    assert statuses == ["我查一下相关资料。", "我看一下时间。"]
     store.close()
 
 
