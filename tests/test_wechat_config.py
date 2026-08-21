@@ -51,6 +51,30 @@ def test_parse_enabled_wechat_config() -> None:
     assert config.max_reply_chars == 1500
 
 
+def test_default_persona_is_friendly_truthful_and_bounded() -> None:
+    assert "温暖、活泼" in DEFAULT_SYSTEM_PROMPT
+    assert "适度开玩笑" in DEFAULT_SYSTEM_PROMPT
+    assert "恋爱、亲属" in DEFAULT_SYSTEM_PROMPT
+    assert "不要虚构" in DEFAULT_SYSTEM_PROMPT
+    assert "上学、工作、购物、出行" in DEFAULT_SYSTEM_PROMPT
+    assert "如实说明你是 AI 助手" in DEFAULT_SYSTEM_PROMPT
+    assert "不能执行命令、读写文件或操作电脑" in DEFAULT_SYSTEM_PROMPT
+
+
+def test_explicit_system_prompt_still_overrides_default_persona() -> None:
+    config = parse_wechat_config(
+        {
+            "enabled": True,
+            "provider": "chat",
+            "allowed_contacts": ["好友"],
+            "system_prompt": "自定义角色",
+        },
+        {"chat"},
+    )
+
+    assert config.system_prompt == "自定义角色"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

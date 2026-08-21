@@ -14,7 +14,7 @@ from mewcode.wechat.uia_client import (
     MAIN_WINDOW_CLASS,
     SEARCH_EDIT_CLASS,
     SEARCH_RESULT_CLASS,
-    SUPPORTED_WECHAT_VERSION,
+    SUPPORTED_WECHAT_VERSIONS,
     WechatUiaClient,
     WechatUiaError,
 )
@@ -136,7 +136,10 @@ def test_target_validation_and_send_are_delegated_under_original_name() -> None:
     assert client.sent == [("好友A", "回复")]
 
 
-def test_main_window_accepts_supported_version_and_caches_handle() -> None:
+@pytest.mark.parametrize("supported_version", SUPPORTED_WECHAT_VERSIONS)
+def test_main_window_accepts_supported_version_and_caches_handle(
+    supported_version: str,
+) -> None:
     window = SimpleNamespace(
         ClassName=MAIN_WINDOW_CLASS,
         NativeWindowHandle=42,
@@ -144,11 +147,11 @@ def test_main_window_accepts_supported_version_and_caches_handle() -> None:
     root = SimpleNamespace(GetChildren=lambda: [window])
     client = object.__new__(WechatUiaClient)
     client._auto = SimpleNamespace(GetRootControl=lambda: root)
-    client._expected_version = SUPPORTED_WECHAT_VERSION
+    client._expected_versions = SUPPORTED_WECHAT_VERSIONS
     client._validated_hwnd = 0
     version_reads: list[object] = []
     client._wechat_version = lambda actual_window: (
-        version_reads.append(actual_window) or SUPPORTED_WECHAT_VERSION
+        version_reads.append(actual_window) or supported_version
     )
 
     assert client._main_window() is window
@@ -165,13 +168,45 @@ def test_main_window_rejects_other_version() -> None:
     root = SimpleNamespace(GetChildren=lambda: [window])
     client = object.__new__(WechatUiaClient)
     client._auto = SimpleNamespace(GetRootControl=lambda: root)
-    client._expected_version = SUPPORTED_WECHAT_VERSION
+    client._expected_versions = SUPPORTED_WECHAT_VERSIONS
     client._validated_hwnd = 0
     client._wechat_version = lambda _: "4.1.12.55"
 
     with pytest.raises(
         WechatUiaError,
-        match=r"仅支持微信 4\.0\.5\.15，当前版本为 4\.1\.12\.55",
+        match=r"仅支持微信 4\.0\.5\.15、4\.1\.9\.30，当前版本为 4\.1\.12\.55",
+    ):
+        client._main_window()
+
+
+def test_main_window_reports_narrator_guidance_for_weixin_qt_shell() -> None:
+    shell = SimpleNamespace(ClassName="Qt51514QWindowIcon", ProcessId=7)
+    root = SimpleNamespace(GetChildren=lambda: [shell])
+    client = object.__new__(WechatUiaClient)
+    client._auto = SimpleNamespace(GetRootControl=lambda: root)
+    client._expected_versions = SUPPORTED_WECHAT_VERSIONS
+    client._validated_hwnd = 0
+    client._wechat_process_path = lambda _: r"C:\Tencent\Weixin\Weixin.exe"
+
+    with pytest.raises(
+        WechatUiaError,
+        match="请先启动 Windows 讲述人并重启微信",
+    ):
+        client._main_window()
+
+
+def test_main_window_does_not_treat_other_qt_window_as_weixin() -> None:
+    shell = SimpleNamespace(ClassName="Qt51514QWindowIcon", ProcessId=7)
+    root = SimpleNamespace(GetChildren=lambda: [shell])
+    client = object.__new__(WechatUiaClient)
+    client._auto = SimpleNamespace(GetRootControl=lambda: root)
+    client._expected_versions = SUPPORTED_WECHAT_VERSIONS
+    client._validated_hwnd = 0
+    client._wechat_process_path = lambda _: r"C:\Tools\OtherQt.exe"
+
+    with pytest.raises(
+        WechatUiaError,
+        match="需要且只允许一个微信主窗口，当前找到 0 个",
     ):
         client._main_window()
 
@@ -186,9 +221,7 @@ def test_405_session_row_parses_exact_name_and_unread_count() -> None:
     client = object.__new__(WechatUiaClient)
     client._thread_context = nullcontext
     client._main_window = object
-    client._find_unique = lambda *_, **__: SimpleNamespace(
-        GetChildren=lambda: [row]
-    )
+    client._find_unique = lambda *_, **__: SimpleNamespace(GetChildren=lambda: [row])
 
     conversations = client.visible_private_conversations()
 

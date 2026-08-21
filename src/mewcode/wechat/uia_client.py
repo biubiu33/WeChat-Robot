@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import re
 import threading
 import time
@@ -11,7 +12,7 @@ from typing import Any
 
 from .models import ConversationRow, VisibleMessage
 
-SUPPORTED_WECHAT_VERSION = "4.0.5.15"
+SUPPORTED_WECHAT_VERSIONS = ("4.0.5.15", "4.1.9.30")
 MAIN_WINDOW_CLASS = "mmui::MainWindow"
 SESSION_LIST_ID = "session_list"
 MESSAGE_LIST_ID = "chat_message_list"
@@ -30,7 +31,11 @@ class WechatUiaError(RuntimeError):
 
 
 class WechatUiaClient:
-    def __init__(self, *, expected_version: str = SUPPORTED_WECHAT_VERSION) -> None:
+    def __init__(
+        self,
+        *,
+        expected_versions: tuple[str, ...] = SUPPORTED_WECHAT_VERSIONS,
+    ) -> None:
         try:
             import uiautomation as auto
         except ImportError as exc:
@@ -38,7 +43,7 @@ class WechatUiaClient:
                 "缺少 uiautomation，请安装 MewCode 的 wechat 可选依赖"
             ) from exc
         self._auto = auto
-        self._expected_version = expected_version
+        self._expected_versions = expected_versions
         self._validated_hwnd = 0
         self._thread_state = threading.local()
 
@@ -301,11 +306,14 @@ class WechatUiaClient:
                 initializer.Uninitialize()
 
     def _main_window(self) -> Any:
+        controls = self._auto.GetRootControl().GetChildren()
         windows = [
-            control
-            for control in self._auto.GetRootControl().GetChildren()
-            if control.ClassName == MAIN_WINDOW_CLASS
+            control for control in controls if control.ClassName == MAIN_WINDOW_CLASS
         ]
+        if not windows and any(self._is_weixin_shell(control) for control in controls):
+            raise WechatUiaError(
+                "微信 UI Automation 未激活，请先启动 Windows 讲述人并重启微信"
+            )
         if len(windows) != 1:
             raise WechatUiaError(
                 f"需要且只允许一个微信主窗口，当前找到 {len(windows)} 个"
@@ -314,14 +322,24 @@ class WechatUiaClient:
         hwnd = int(window.NativeWindowHandle)
         if hwnd != self._validated_hwnd:
             actual = self._wechat_version(window)
-            if actual != self._expected_version:
-                raise WechatUiaError(
-                    f"仅支持微信 {self._expected_version}，当前版本为 {actual}"
-                )
+            if actual not in self._expected_versions:
+                supported = "、".join(self._expected_versions)
+                raise WechatUiaError(f"仅支持微信 {supported}，当前版本为 {actual}")
             self._validated_hwnd = hwnd
         return window
 
-    def _wechat_version(self, window: Any) -> str:
+    def _is_weixin_shell(self, control: Any) -> bool:
+        class_name = str(getattr(control, "ClassName", ""))
+        if not (class_name.startswith("Qt") and class_name.endswith("QWindowIcon")):
+            return False
+        try:
+            executable = self._wechat_process_path(control)
+        except WechatUiaError:
+            return False
+        return ntpath.basename(executable).casefold() == "weixin.exe"
+
+    @staticmethod
+    def _wechat_process_path(window: Any) -> str:
         try:
             import win32api
             import win32con
@@ -333,9 +351,17 @@ class WechatUiaClient:
                 int(window.ProcessId),
             )
             try:
-                path = win32process.GetModuleFileNameEx(handle, 0)
+                return str(win32process.GetModuleFileNameEx(handle, 0))
             finally:
                 win32api.CloseHandle(handle)
+        except Exception as exc:
+            raise WechatUiaError(f"无法读取微信客户端进程路径: {exc}") from exc
+
+    def _wechat_version(self, window: Any) -> str:
+        try:
+            import win32api
+
+            path = self._wechat_process_path(window)
             info = win32api.GetFileVersionInfo(path, "\\")
             ms, ls = info["FileVersionMS"], info["FileVersionLS"]
             return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
@@ -381,7 +407,7 @@ class WechatUiaClient:
 
 
 __all__ = [
-    "SUPPORTED_WECHAT_VERSION",
+    "SUPPORTED_WECHAT_VERSIONS",
     "WechatUiaClient",
     "WechatUiaError",
 ]

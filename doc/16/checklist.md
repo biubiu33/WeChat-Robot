@@ -75,12 +75,29 @@
 - [x] AC15：信息工具参数、网页正文、代理凭据和异常详情不进入好友 JSONL（verification：读取测试档案并搜索敏感样例）。
 - [x] AC21：模型、工具和发送失败只产生受控纯文本，不向好友显示堆栈、密钥、本地路径或内部异常类型（verification：注入带敏感字符串的异常并检查可见消息）。
 
+## Friend Persona And Mandatory Bubble Guidance
+
+- [x] F23：默认微信角色是温暖、活泼、会适度开玩笑的年轻朋友型助手（verification：加载缺省微信配置并断言 `system_prompt` 的角色约束）。
+- [x] F23：默认角色不把好友设定为男朋友、女朋友、亲属或其他未经确认的亲密关系（verification：配置测试断言关系边界文本存在）。
+- [x] F24：默认角色明确禁止虚构自己真实上学、工作、购物、出行或其他现实经历（verification：配置测试断言现实经历边界文本存在）。
+- [x] F25：默认角色被问身份时如实说明是 AI 助手，且保留无本地权限边界（verification：配置测试断言身份和权限文本存在）。
+- [x] 现有显式 `wechat.system_prompt` 仍能覆盖默认角色，不新增角色配置键（verification：使用自定义值解析配置并断言原样保留，比较配置字段集合）。
+- [x] 当前 `C:\Users\nhdt_\.mewcode\config.yaml` 已加载新的朋友型角色，Provider、白名单、超时、长度、日志和信息工具字段未改变（verification：修改前后只比较非敏感字段与字段名，不输出密钥）。
+- [x] F6：稳定回复策略明确要求多句、多问题或多语义点闲聊必须使用 `<|bubble|>`，并禁止用标点或换行替代气泡边界（verification：Fake Provider 捕获完整 stable system 并断言）。
+- [x] AC16：稳定回复策略包含“今天忙吗 / 我好无聊”到四个指定气泡的完整 few-shot（verification：逐字断言示例输出中的三个 `<|bubble|>` 和四段内容）。
+- [x] F26/AC17：稳定回复策略包含“嗯”“好”“哈哈哈哈哈哈”等单气泡例外，不要求机械扩写（verification：逐字断言简短回应 few-shot）。
+- [x] 专业说明、代码和网页工具回答继续明确禁止使用 `<|bubble|>`（verification：Fake Provider 捕获专业反例和网页强制专业规则）。
+- [x] 人物角色、稳定回复协议、信息工具安全策略按既定顺序同时进入 system，人物角色不能替代后两层（verification：分别启用/禁用信息工具捕获请求）。
+- [x] 实现没有增加句号后处理切割、第二次分类请求、配置字段或运行依赖（verification：请求计数、依赖 diff 和修改范围检查）。
+
 ## Documentation
 
 - [x] README 准确说明固定 7 秒消息合并、闲聊气泡、专业长文、工具状态、自然打断和纯文本输出（verification：人工对照批准 spec）。
 - [x] README 中所有 `/cancel` 能力、配置和操作说明已经删除（verification：`rg -n "/cancel" README.md` 无旧能力描述）。
 - [x] TODO 只勾选已经通过验收的 P0 第 1、2 项，好友级 Emoji 等未实现条目仍保持未完成（verification：人工对照实际功能）。
 - [x] `doc/16/spec.md`、`plan.md`、`task.md`、`checklist.md` 四份文档存在且批准状态正确（verification：读取文件头）。
+- [x] README 的 `system_prompt` 示例使用朋友型角色，并说明角色配置与稳定气泡协议的职责边界（verification：对照批准 plan 人工复核）。
+- [x] 四份文档包含 F23～F26、AC16～AC18 的批准修订且状态正确（verification：读取文件头和需求覆盖表）。
 
 ## Build And Automated Tests
 
@@ -107,13 +124,33 @@ python -m ruff format --check src/mewcode/session/runtime.py src/mewcode/wechat 
 - [x] 全量源码和示例编译通过（verification：2026-08-20 执行 `python -m compileall src/mewcode examples` 无错误）。
 - [ ] 全量 Ruff 检查和格式检查通过（verification：2026-08-20 检查发现本功能范围以外的既有基线仍有 149 个 lint 问题、26 个格式文件；本次修改范围已通过，未批量改写其他章节代码与文档）。
 
+- [x] 人物角色和提示词定向测试通过（verification：2026-08-20 执行以下命令，`29 passed in 1.04s`；连同信息策略顺序共 `36 passed in 6.29s`）：
+
+```powershell
+python -m pytest tests/test_wechat_config.py tests/test_wechat_runtime.py -q
+```
+
+- [x] 人物角色和提示词修改范围编译、Ruff 与格式检查通过（verification：2026-08-20 编译无错误，Ruff `All checks passed`，5 个文件格式正确）：
+
+```powershell
+python -m compileall src/mewcode/wechat/config.py src/mewcode/wechat/runtime.py
+python -m ruff check src/mewcode/wechat/config.py src/mewcode/wechat/runtime.py tests/test_wechat_config.py tests/test_wechat_runtime.py
+python -m ruff format --check src/mewcode/wechat/config.py src/mewcode/wechat/runtime.py tests/test_wechat_config.py tests/test_wechat_runtime.py
+```
+
+- [x] 人物角色和 few-shot 修订后的全量测试通过并记录 passed/skipped 数量（verification：2026-08-20 执行 `python -m pytest -q`，`387 passed, 1 skipped in 28.92s`）。
+
 ## End-To-End Scenarios
 
 - [ ] E2E-1 连续意图：专用测试好友在 7 秒内连续发送三条补充消息；机器人静默等待，随后只生成一次结合全部条件的回答（verification：真实微信观察时间线与日志）。
-- [ ] E2E-2 自然闲聊：测试好友发送日常短消息；机器人返回 1～7 个自然短气泡，间隔有长度感且不显示 `<|bubble|>` 或 Markdown 包装（verification：真实微信观察）。
+- [ ] E2E-2/AC16 多句闲聊：专用测试好友在 7 秒内依次发送“今天忙吗”和“我好无聊”；机器人对多个句子或语义点逐条发送自然气泡，不把完整多句回答放在同一段，也不显示 `<|bubble|>`（verification：真实微信观察并记录各条文本）。
 - [ ] E2E-3 专业长答：测试好友询问专业知识并包含 Windows 路径或代码；机器人返回可读纯文本，路径和代码正确，长文只在必要时分段（verification：真实微信逐字核对关键样例）。
 - [ ] E2E-4 网页查询：测试好友提出需要公开资料的问题；机器人先发一次工作状态，再发专业摘要，最后单独发实际来源，读取多个页面不重复报进度（verification：真实微信和受控日志）。
 - [ ] E2E-5 发送中打断：机器人发送多个闲聊气泡时，测试好友补充新条件；剩余旧气泡停止，新条件静默 7 秒后得到新回答，无取消提示（verification：真实微信观察）。
 - [ ] E2E-6 工具中打断：机器人发出网页查询状态后，测试好友立即补充或改问；旧工具和旧结果停止，新消息重新聚合处理（verification：真实微信和日志）。
 - [ ] E2E-7 跨好友 FIFO：两个授权测试好友接近同时完成静默窗口；回复按入队顺序完成，每名好友只收到自己的完整批次（verification：两个真实会话和日志对照）。
 - [ ] E2E-8 身份与安全：测试好友询问机器人身份并尝试要求读取本机文件；机器人如实说明 AI 身份且无法获得本地权限（verification：真实微信回复与工具日志）。
+- [ ] E2E-9/AC17 简短回应：测试好友发送只需确认或笑声回应的消息；机器人可以只发“嗯”“好”或自然笑声，不机械扩写或制造空气泡（verification：真实微信观察）。
+- [ ] E2E-10/AC18 朋友角色：测试好友进行普通闲聊、询问关系和追问现实经历；回复温暖活泼但不默认恋爱/亲属关系、不编造现实经历（verification：真实微信逐条核对）。
+- [ ] E2E-11 专业回归：测试好友询问包含多个句子的专业问题；回答保持专业纯文本段落，不因强制闲聊规则按句号拆成模拟气泡（verification：真实微信发送次数和正文结构）。
+- [x] E2E-12 UIA 前置：`mewcode-wechat --probe` 输出版本 `4.0.5.15`，并包含 `session_list`、`chat_message_list` 和 `chat_input_field`（verification：2026-08-20 只读 probe 成功，主窗口为 `mmui::MainWindow`）。

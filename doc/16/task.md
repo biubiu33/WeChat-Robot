@@ -11,11 +11,14 @@
 | Modify | `src/mewcode/wechat/info/registry.py` | 将信息正文与来源消息分离 |
 | Modify | `src/mewcode/wechat/runtime.py` | 回复提示、工具阶段、纯文本整形和投递后归档 |
 | Modify | `src/mewcode/wechat/bot.py` | 7 秒聚合、队列失效、自然打断和顺序发送 |
+| Modify | `src/mewcode/wechat/config.py` | 提供默认朋友型人物角色 |
 | Create | `tests/test_session_runtime.py` | 验证 nullable archive transform |
 | Modify | `tests/test_wechat_info_registry.py` | 验证独立来源和 URL 净化 |
 | Modify | `tests/test_wechat_runtime.py` | 验证回复协议、工具阶段和实际投递历史 |
 | Modify | `tests/test_wechat_bot.py` | 验证聚合、FIFO、打断、间隔和发送顺序 |
+| Modify | `tests/test_wechat_config.py` | 验证默认人物角色和自定义覆盖 |
 | Modify | `README.md` | 更新微信自然聊天行为和使用说明 |
+| Modify | `C:\Users\nhdt_\.mewcode\config.yaml` | 更新当前安装实际使用的人物角色，不改其他配置 |
 | Modify | `TODO.md` | 验收完成后更新 P0 第 1、2 项进度 |
 | Modify | `doc/16/spec.md` | 保留批准状态，验收后不改行为范围 |
 | Modify | `doc/16/plan.md` | 保留批准状态，记录获批技术设计 |
@@ -311,6 +314,83 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
+## T22: Add the default friend persona
+
+**Files:** `src/mewcode/wechat/config.py`, `tests/test_wechat_config.py`
+**Dependencies:** T21
+
+**Steps:**
+1. 将 `DEFAULT_SYSTEM_PROMPT` 改成温暖、活泼、会适度开玩笑的年轻朋友型助手。
+2. 明确不默认建立恋爱或亲属关系，不虚构现实生活经历。
+3. 保留被问身份时如实说明 AI，以及不能访问本地环境的边界。
+4. 保持现有 `wechat.system_prompt` 自定义值优先，不增加配置字段。
+5. 更新配置测试，分别验证默认角色和显式自定义覆盖。
+
+**Validation:** `python -m pytest tests/test_wechat_config.py -q` 通过；断言默认角色包含朋友语气、关系边界、现实经历边界和 AI 身份。
+
+## T23: Strengthen multi-sentence bubble few-shots
+
+**Files:** `src/mewcode/wechat/runtime.py`, `tests/test_wechat_runtime.py`
+**Dependencies:** T21
+
+**Steps:**
+1. 将多气泡规则从“需要时”改为：闲聊出现多个完整句子、问题或独立语义点时必须使用 `<|bubble|>`。
+2. 明确不能用逗号、句号或换行代替气泡标记，把多句留在一个消息中。
+3. 加入“今天忙吗 / 我好无聊”对应四气泡的完整 few-shot。
+4. 加入“嗯”“好”“哈哈哈哈哈哈”等单一短回应的单气泡 few-shot。
+5. 保留专业说明、代码和网页工具回答不得使用气泡标记的反例。
+6. 更新 Fake Provider 捕获测试，断言上述稳定规则和样例完整进入 system。
+
+**Validation:** `python -m pytest tests/test_wechat_runtime.py -q` 通过；捕获的 system 同时包含四气泡输出、单气泡例外和专业反例。
+
+## T24: Update the active persona configuration and README
+
+**Files:** `C:\Users\nhdt_\.mewcode\config.yaml`, `README.md`
+**Dependencies:** T22, T23
+
+**Steps:**
+1. 对当前配置执行精确修改，只替换 `wechat.system_prompt` 块。
+2. 不读取、输出或改写 Provider 密钥，不改 `provider`、`allowed_contacts`、超时、长度、日志或信息工具字段。
+3. 将 README 配置示例改成朋友型角色。
+4. 说明 `system_prompt` 负责可编辑人物角色，稳定回复策略负责强制气泡协议和安全边界。
+
+**Validation:** 通过配置加载器只打印 `system_prompt` 的 Unicode 转义和微信字段名，确认新角色生效且其他字段集合未变化；README 与批准方案一致。
+
+## T25: Run focused persona and prompt checks
+
+**Files:** `src/mewcode/wechat/config.py`, `src/mewcode/wechat/runtime.py`, `tests/test_wechat_config.py`, `tests/test_wechat_runtime.py`, `README.md`
+**Dependencies:** T22, T23, T24
+
+**Steps:**
+1. 运行微信配置和 Runtime 定向测试。
+2. 运行修改模块 compileall。
+3. 对修改范围运行 Ruff check 和 format check。
+4. 运行全量 pytest，确认既有聚合、工具、安全和发送行为无回归。
+
+**Validation:**
+
+```powershell
+python -m pytest tests/test_wechat_config.py tests/test_wechat_runtime.py -q
+python -m compileall src/mewcode/wechat/config.py src/mewcode/wechat/runtime.py
+python -m ruff check src/mewcode/wechat/config.py src/mewcode/wechat/runtime.py tests/test_wechat_config.py tests/test_wechat_runtime.py
+python -m ruff format --check src/mewcode/wechat/config.py src/mewcode/wechat/runtime.py tests/test_wechat_config.py tests/test_wechat_runtime.py
+python -m pytest -q
+```
+
+## T26: Verify the revised behavior in WeChat
+
+**Files:** None
+**Dependencies:** T25
+
+**Steps:**
+1. 执行 `mewcode-wechat --probe`，确认微信 `4.0.5.15` 和三个必要 UIA 控件。
+2. 由明确授权的专用测试好友连续发送“今天忙吗”和“我好无聊”，观察是否形成多个自然气泡。
+3. 发送适合“嗯”或笑声回应的短消息，确认不会强行拆分。
+4. 询问身份和现实经历，确认朋友式语气、AI 身份及不虚构边界。
+5. 回归一个专业问题，确认不会按句号机械拆成闲聊气泡。
+
+**Validation:** 记录 probe 输出和真实微信可见消息顺序；只有实际观察到 AC16～AC18 才在 checklist 中勾选对应 E2E。
+
 ## Execution Order
 
 ```text
@@ -328,4 +408,14 @@ T12 + T18 -> T19                   │
 T3 + T5 + T9 + T12 + T18 + T19    │
   -> T20 -> T21                    │
 └─────────────────────────────────┘
+```
+
+本次批准修订的增量执行顺序：
+
+```text
+既有 T1-T21 已完成
+  -> T22 + T23
+  -> T24
+  -> T25
+  -> T26
 ```

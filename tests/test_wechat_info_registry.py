@@ -314,6 +314,12 @@ async def test_runtime_registers_only_three_tools_and_never_archives_raw_tool_da
     assert "执行命令" in provider.requests[0].system.stable
     assert "当前天气" in provider.requests[0].system.stable
     assert "自动使用 web_search" in provider.requests[0].system.stable
+    stable = provider.requests[0].system.stable
+    assert (
+        stable.index(wechat_config.system_prompt)
+        < stable.index("你正在微信私聊中回复好友")
+        < stable.index("你只能使用本轮列出的三个只读公共信息工具")
+    )
     assert str(tmp_path) not in provider.requests[0].system.environment
     assert provider.requests[1].messages[-1].role == "tool"
     assert (

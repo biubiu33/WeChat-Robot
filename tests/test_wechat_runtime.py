@@ -146,6 +146,25 @@ async def test_runtime_exposes_no_tools_or_local_environment(tmp_path: Path) -> 
     assert request.tools == []
     assert request.system.stable.startswith("安全微信助手")
     assert BUBBLE_DELIMITER in request.system.stable
+    assert "只要可以自然拆开，就必须" in request.system.stable
+    assert "每个气泡的可见文本最多十个字符，标点也计算在内" in request.system.stable
+    assert "多个句子、问题或独立语义点也不能挤在同一个气泡里" in request.system.stable
+    assert "`~and` 或 `\\~and`" in request.system.stable
+    assert (
+        "哈哈今天不算特别忙<|bubble|>就是回答了一堆问题"
+        "<|bubble|>你呢，怎么无聊起来了<|bubble|>今天没安排点事做？"
+        in request.system.stable
+    )
+    assert "你的输出：嗯" in request.system.stable
+    assert "你的输出：哈哈哈哈哈哈" in request.system.stable
+    assert (
+        "哈哈今天还行<|bubble|>不算忙<|bubble|>正好有空陪你聊"
+        "<|bubble|>哦？<|bubble|>听起来不错呀<|bubble|>都干嘛了？"
+        "<|bubble|>分享分享～" in request.system.stable
+    )
+    assert request.system.stable.index("安全微信助手") < request.system.stable.index(
+        "你正在微信私聊中回复好友"
+    )
     assert "Markdown" in request.system.stable
     assert "不能访问本地环境" in request.system.environment
     assert str(tmp_path) not in request.system.environment

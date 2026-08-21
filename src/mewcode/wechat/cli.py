@@ -13,7 +13,7 @@ from .bot import WechatBot
 from .config import parse_wechat_config
 from .runtime import WechatAgentRuntime
 from .store import WechatStateStore
-from .uia_client import SUPPORTED_WECHAT_VERSION, WechatUiaClient, WechatUiaError
+from .uia_client import SUPPORTED_WECHAT_VERSIONS, WechatUiaClient, WechatUiaError
 from .uia_driver import WechatUiaDriver
 
 
@@ -22,7 +22,10 @@ def main() -> None:
     parser.add_argument(
         "--probe",
         action="store_true",
-        help=f"只读输出微信 {SUPPORTED_WECHAT_VERSION} 必要 UIA 控件，不启动机器人",
+        help=(
+            "只读输出微信 "
+            f"{'、'.join(SUPPORTED_WECHAT_VERSIONS)} 必要 UIA 控件，不启动机器人"
+        ),
     )
     args = parser.parse_args()
     try:
