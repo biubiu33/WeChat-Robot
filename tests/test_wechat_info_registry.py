@@ -111,7 +111,6 @@ def configs() -> tuple[ProviderConfig, WechatConfig]:
         True,
         "fake",
         ("A",),
-        "微信助手",
         10,
         1500,
         "INFO",
@@ -316,7 +315,7 @@ async def test_runtime_registers_only_three_tools_and_never_archives_raw_tool_da
     assert "自动使用 web_search" in provider.requests[0].system.stable
     stable = provider.requests[0].system.stable
     assert (
-        stable.index(wechat_config.system_prompt)
+        stable.index("# 微信角色设定")
         < stable.index("你正在微信私聊中回复好友")
         < stable.index("你只能使用本轮列出的三个只读公共信息工具")
     )
@@ -367,7 +366,6 @@ async def test_weather_question_uses_web_search_and_appends_source(
         True,
         "fake",
         ("weather-test-friend",),
-        "微信助手",
         10,
         1500,
         "INFO",

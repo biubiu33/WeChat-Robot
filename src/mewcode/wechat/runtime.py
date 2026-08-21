@@ -4,13 +4,15 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
+from functools import cache
+from importlib.resources import files
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from tzlocal import get_localzone_name
 
 from mewcode.agent import NOTICE_CANCELLED, Agent, Completion, Phase
-from mewcode.config import ProviderConfig
+from mewcode.config import ConfigError, ProviderConfig
 from mewcode.llm import Message, Provider, ToolCall, ToolResult, new_provider
 from mewcode.permission import Mode
 from mewcode.session.archive import ArchiveWriter
@@ -28,48 +30,6 @@ REDACTED_TOOL_ARGS = "{}"
 REDACTED_TOOL_CONTENT = "[微信公共信息工具内容未写入会话档案]"
 BUBBLE_DELIMITER = "<|bubble|>"
 MAX_CHAT_BUBBLES = 7
-
-WECHAT_REPLY_POLICY = f"""
-你正在微信私聊中回复好友。先根据当前消息和本好友的对话上下文，选择自然闲聊表达或专业回答表达，不要额外说明你的分类过程。
-
-日常闲聊应简短、口语化并直接回应当前语境。避免机械复述，避免固定使用“当然可以”“希望对你有所帮助”“有需要随时找我”等套话，不要无缘无故展开成长说明、强行开启新话题或主动发出邀请。
-闲聊回答只要可以自然拆开，就必须按自然口语边界全部拆成多个短气泡，并且只在气泡之间输出分隔标记 {BUBBLE_DELIMITER}。每个气泡的可见文本最多十个字符，标点也计算在内；即使没有超过十个字符，多个句子、问题或独立语义点也不能挤在同一个气泡里。不能用逗号、句号、问号、换行、`~and` 或 `\\~and` 代替气泡分隔标记。通常使用一至四个气泡，最多七个。
-只有“嗯”“好”“哈哈哈哈哈哈”等简短确认、情绪、笑声，或者本身只有一个完整语义点的回答，可以只输出一个气泡。不要为了拆分而机械扩写或拆碎词语。
-
-专业知识、步骤说明、代码、资料整理和工具结果应使用完整、清楚的纯文本段落，不得使用 {BUBBLE_DELIMITER}。可以使用普通空行和自然的中文编号。
-所有回答都不要使用 Markdown 包装：不要使用星号加粗或斜体、Markdown 标题、引用符号、Markdown 链接或三反引号代码围栏。代码直接原样输出并保留缩进和代码字符。
-工具进度由宿主程序另行告知好友；不要在最终回答中重复“我正在调用工具”之类的过程提示。
-被问及身份时如实说明你是 AI 助手，不要伪装成人类；现有安全和权限边界始终有效。
-
-闲聊多气泡示例：
-好友输入：
-今天忙吗
-我好无聊
-你的输出：
-哈哈今天不算特别忙{BUBBLE_DELIMITER}就是回答了一堆问题{BUBBLE_DELIMITER}你呢，怎么无聊起来了{BUBBLE_DELIMITER}今天没安排点事做？
-
-闲聊短气泡示例：
-好友输入：今天都干嘛了？
-你的输出：哈哈今天还行{BUBBLE_DELIMITER}不算忙{BUBBLE_DELIMITER}正好有空陪你聊{BUBBLE_DELIMITER}哦？{BUBBLE_DELIMITER}听起来不错呀{BUBBLE_DELIMITER}都干嘛了？{BUBBLE_DELIMITER}分享分享～
-
-闲聊单气泡示例一：
-好友输入：你听懂了吗
-你的输出：嗯
-
-闲聊单气泡示例二：
-好友输入：哈哈哈，太离谱了
-你的输出：哈哈哈哈哈哈
-
-专业说明示例：
-这件事主要有两个原因：
-
-一、输入数据不完整。
-二、当前条件互相冲突。
-
-代码回答示例：
-def greet(name):
-    return f"你好，{{name}}"
-""".strip()
 
 _FENCE_RE = re.compile(r"^\s*`{3}[^\n]*\s*$")
 _HEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s+")
@@ -114,6 +74,7 @@ class WechatAgentRuntime:
         self._store = store
         self._provider = provider or new_provider(provider_config)
         self._repository = SessionRepository(self._root)
+        self._role_prompt, self._reply_policy = _load_wechat_prompts()
         self._info_services = info_services
         if self._info_services is None and config.info_tools.enabled:
             self._info_services = WechatInfoServices(config.info_tools, store)
@@ -167,6 +128,13 @@ class WechatAgentRuntime:
             if completion.error is not None:
                 raise WechatAgentError("模型请求失败") from completion.error
 
+            print(
+                "[wechat:model:raw-final]",
+                completion.text,
+                "[/wechat:model:raw-final]",
+                sep="\n",
+                flush=True,
+            )
             answer = completion.text.strip()
             source_message = ""
             if turn is not None:
@@ -281,10 +249,30 @@ class WechatAgentRuntime:
         return runtime
 
     def _stable_system(self, turn: WechatInfoTurn | None) -> str:
-        parts = [self._config.system_prompt, WECHAT_REPLY_POLICY]
+        parts = [self._role_prompt, self._reply_policy]
         if turn is not None:
             parts.append(WECHAT_INFO_POLICY)
         return "\n\n".join(parts)
+
+
+@cache
+def _load_wechat_prompts() -> tuple[str, str]:
+    return _load_prompt("role.md"), _load_prompt("reply_policy.md")
+
+
+def _load_prompt(name: str) -> str:
+    try:
+        prompt = (
+            files("mewcode.wechat")
+            .joinpath("prompts", name)
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    except (OSError, UnicodeError) as exc:
+        raise ConfigError(f"无法读取微信提示词文件 {name}: {exc}") from exc
+    if not prompt:
+        raise ConfigError(f"微信提示词文件 {name} 不能为空")
+    return prompt
 
 
 def _wechat_environment(tools_enabled: bool) -> str:
@@ -423,12 +411,13 @@ def _chat_delay(next_text: str, seconds_per_char: float) -> float:
 
 __all__ = [
     "BUBBLE_DELIMITER",
-    "WECHAT_REPLY_POLICY",
     "WechatAgentError",
     "WechatAgentRuntime",
     "WechatTurnCancelled",
     "_build_wechat_reply",
     "_chat_delay",
+    "_load_prompt",
+    "_load_wechat_prompts",
     "_split_professional_text",
     "_to_wechat_plain_text",
     "_wechat_archive_message",

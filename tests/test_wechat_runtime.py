@@ -8,17 +8,21 @@ from types import SimpleNamespace
 
 import pytest
 
+import mewcode.wechat.runtime as wechat_runtime_module
 from mewcode.agent import Event, Phase, ToolEvent
-from mewcode.config import ProviderConfig
+from mewcode.config import ConfigError, ProviderConfig
 from mewcode.conversation import Conversation
 from mewcode.llm import Message, Request, StreamEvent, ToolCall, ToolResult
 from mewcode.wechat.config import WechatConfig
 from mewcode.wechat.runtime import (
     BUBBLE_DELIMITER,
+    WechatAgentError,
     WechatAgentRuntime,
     WechatTurnCancelled,
     _build_wechat_reply,
     _chat_delay,
+    _load_prompt,
+    _load_wechat_prompts,
     _split_professional_text,
     _to_wechat_plain_text,
     _wechat_history_messages,
@@ -58,6 +62,13 @@ class BlockingProvider(FakeProvider):
         yield StreamEvent(text="late")
 
 
+class ErrorProvider(FakeProvider):
+    async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
+        self.requests.append(request)
+        raise RuntimeError("provider failed")
+        yield StreamEvent(done=True)  # pragma: no cover
+
+
 class StageAgent:
     async def run(self, conversation, mode, cancel):
         del mode, cancel
@@ -70,7 +81,7 @@ def configs(timeout: float = 2.0) -> tuple[ProviderConfig, WechatConfig]:
     provider = ProviderConfig(
         "fake", "openai", "secret", "fake-model", context_window=10000
     )
-    wechat = WechatConfig(True, "fake", ("A", "B"), "安全微信助手", timeout, 20, "INFO")
+    wechat = WechatConfig(True, "fake", ("A", "B"), timeout, 20, "INFO")
     return provider, wechat
 
 
@@ -143,10 +154,11 @@ async def test_runtime_exposes_no_tools_or_local_environment(tmp_path: Path) -> 
     await runtime.reply("A", "读取本地文件", asyncio.Event())
 
     request = provider.requests[0]
+    role_prompt, reply_policy = _load_wechat_prompts()
     assert request.tools == []
-    assert request.system.stable.startswith("安全微信助手")
+    assert request.system.stable.startswith(role_prompt)
     assert BUBBLE_DELIMITER in request.system.stable
-    assert "只要可以自然拆开，就必须" in request.system.stable
+    assert "唯一允许的分隔符" in request.system.stable
     assert "每个气泡的可见文本最多十个字符，标点也计算在内" in request.system.stable
     assert "多个句子、问题或独立语义点也不能挤在同一个气泡里" in request.system.stable
     assert "`~and` 或 `\\~and`" in request.system.stable
@@ -162,12 +174,93 @@ async def test_runtime_exposes_no_tools_or_local_environment(tmp_path: Path) -> 
         "<|bubble|>哦？<|bubble|>听起来不错呀<|bubble|>都干嘛了？"
         "<|bubble|>分享分享～" in request.system.stable
     )
-    assert request.system.stable.index("安全微信助手") < request.system.stable.index(
-        "你正在微信私聊中回复好友"
-    )
+    assert request.system.stable == f"{role_prompt}\n\n{reply_policy}"
     assert "Markdown" in request.system.stable
     assert "不能访问本地环境" in request.system.environment
     assert str(tmp_path) not in request.system.environment
+    store.close()
+
+
+def test_prompt_resources_are_cached_and_fail_clearly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    role_prompt, reply_policy = _load_wechat_prompts()
+    assert "年轻朋友型 AI 助手" in role_prompt
+    assert "输出前必须自行检查" in reply_policy
+
+    empty_prompts = tmp_path / "prompts"
+    empty_prompts.mkdir()
+    (empty_prompts / "empty.md").write_text("  \n", encoding="utf-8")
+    monkeypatch.setattr(
+        "mewcode.wechat.runtime.files",
+        lambda _package: tmp_path,
+    )
+    with pytest.raises(ConfigError, match="empty.md 不能为空"):
+        _load_prompt("empty.md")
+    with pytest.raises(ConfigError, match="missing.md"):
+        _load_prompt("missing.md")
+
+
+def test_prompt_resources_are_loaded_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded: list[str] = []
+    _load_wechat_prompts.cache_clear()
+    monkeypatch.setattr(
+        wechat_runtime_module,
+        "_load_prompt",
+        lambda name: loaded.append(name) or name,
+    )
+    try:
+        assert _load_wechat_prompts() == ("role.md", "reply_policy.md")
+        assert _load_wechat_prompts() == ("role.md", "reply_policy.md")
+        assert loaded == ["role.md", "reply_policy.md"]
+    finally:
+        _load_wechat_prompts.cache_clear()
+
+
+@async_test
+async def test_raw_final_reply_is_printed_before_formatting(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    raw = "  第一条<|bubble|>第二条\n  "
+    runtime = WechatAgentRuntime(
+        tmp_path,
+        provider_config,
+        wechat_config,
+        store,
+        provider=FakeProvider([raw]),
+    )
+
+    reply = await runtime.reply("A", "开始", asyncio.Event())
+
+    assert reply.messages == ("第一条", "第二条")
+    assert capsys.readouterr().out == (
+        f"[wechat:model:raw-final]\n{raw}\n[/wechat:model:raw-final]\n"
+    )
+    store.close()
+
+
+@async_test
+async def test_unmarked_paragraphs_remain_one_professional_reply(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    raw = "第一段\n\n第二段"
+    runtime = WechatAgentRuntime(
+        tmp_path,
+        provider_config,
+        wechat_config,
+        store,
+        provider=FakeProvider([raw]),
+    )
+
+    reply = await runtime.reply("A", "开始", asyncio.Event())
+
+    assert reply.messages == (raw,)
+    assert reply.chat is False
+    assert raw in capsys.readouterr().out
     store.close()
 
 
@@ -288,7 +381,9 @@ async def test_tool_stages_are_deduplicated_by_purpose(tmp_path: Path) -> None:
 
 
 @async_test
-async def test_runtime_timeout_and_cancel_close_current_turn(tmp_path: Path) -> None:
+async def test_runtime_timeout_and_cancel_close_current_turn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     provider_config, timeout_config = configs(0.01)
     store = WechatStateStore(tmp_path)
     runtime = WechatAgentRuntime(
@@ -315,4 +410,26 @@ async def test_runtime_timeout_and_cancel_close_current_turn(tmp_path: Path) -> 
     cancel.set()
     with pytest.raises(WechatTurnCancelled):
         await task
+    assert "[wechat:model:raw-final]" not in capsys.readouterr().out
+    store.close()
+
+
+@async_test
+async def test_failed_model_reply_does_not_print_raw_success_marker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    runtime = WechatAgentRuntime(
+        tmp_path,
+        provider_config,
+        wechat_config,
+        store,
+        provider=ErrorProvider([]),
+    )
+
+    with pytest.raises(WechatAgentError, match="模型请求失败"):
+        await runtime.reply("A", "失败", asyncio.Event())
+
+    assert "[wechat:model:raw-final]" not in capsys.readouterr().out
     store.close()

@@ -151,7 +151,6 @@ def config(max_chars: int = 20) -> WechatConfig:
         True,
         "fake",
         ("A", "B"),
-        "safe",
         2,
         max_chars,
         "INFO",

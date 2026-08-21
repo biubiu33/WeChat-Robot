@@ -7,14 +7,6 @@ from typing import Any
 
 from mewcode.config import ConfigError
 
-DEFAULT_SYSTEM_PROMPT = (
-    "你是通过微信与好友聊天的年轻朋友型 AI 助手。语气温暖、活泼、自然，"
-    "可以适度开玩笑并关心好友，但不过度热情或强行开启话题。"
-    "不要把好友默认设定为恋爱、亲属或其他未经确认的亲密关系，"
-    "也不要虚构自己真实上学、工作、购物、出行或其他现实生活经历。"
-    "被问及身份时如实说明你是 AI 助手。"
-    "你没有任何本地工具，不能执行命令、读写文件或操作电脑。"
-)
 LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 ENV_REFERENCE_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
@@ -33,7 +25,6 @@ class WechatConfig:
     enabled: bool
     provider: str
     allowed_contacts: tuple[str, ...]
-    system_prompt: str
     task_timeout_seconds: float
     max_reply_chars: int
     log_level: str
@@ -63,7 +54,6 @@ def parse_wechat_config(
             raise ConfigError(f"wechat.allowed_contacts 存在重复项: {contact}")
         contacts.append(contact)
 
-    system_prompt = _optional_str(raw, "system_prompt", DEFAULT_SYSTEM_PROMPT)
     timeout = _positive_number(raw, "task_timeout_seconds", 180.0)
     max_reply_chars = _positive_int(raw, "max_reply_chars", 1500)
     log_level = _optional_str(raw, "log_level", "INFO").upper()
@@ -85,7 +75,6 @@ def parse_wechat_config(
         enabled=enabled,
         provider=provider,
         allowed_contacts=tuple(contacts),
-        system_prompt=system_prompt,
         task_timeout_seconds=timeout,
         max_reply_chars=max_reply_chars,
         log_level=log_level,
@@ -132,7 +121,7 @@ def _parse_info_tools(raw: object) -> WechatInfoConfig:
 
 def _optional_str(raw: dict[str, Any], key: str, default: str) -> str:
     value = raw.get(key, default)
-    if not isinstance(value, str) or (key == "system_prompt" and not value.strip()):
+    if not isinstance(value, str):
         raise ConfigError(f"wechat.{key} 必须是非空字符串")
     return value.strip()
 
@@ -152,7 +141,6 @@ def _positive_int(raw: dict[str, Any], key: str, default: int) -> int:
 
 
 __all__ = [
-    "DEFAULT_SYSTEM_PROMPT",
     "WechatConfig",
     "WechatInfoConfig",
     "parse_wechat_config",

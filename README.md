@@ -117,10 +117,6 @@ wechat:
   provider: claude
   allowed_contacts:
     - 专用测试好友
-  system_prompt: |
-    你是通过微信与好友聊天的年轻朋友型 AI 助手。语气温暖、活泼、自然，可以适度开玩笑并关心好友。
-    不要把好友默认设定为恋爱、亲属或其他未经确认的亲密关系，也不要虚构自己的现实生活经历。
-    被问及身份时如实说明你是 AI 助手；你没有任何本地工具。
   task_timeout_seconds: 180
   max_reply_chars: 1500
   log_level: INFO
@@ -131,7 +127,9 @@ wechat:
     nominatim_proxy: ${HTTPS_PROXY}
 ```
 
-`provider` 必须引用 `providers` 中已有的 `name`。`allowed_contacts` 使用微信会话显示名精确匹配；重名会话会安全拒绝。`system_prompt` 只负责可编辑的人物角色；多句气泡、专业回答格式和安全边界由程序的稳定回复策略继续强制执行。每名好友使用独立并持久化的 MewCode Session，但微信好友始终没有 Bash、文件、MCP、Skills、Sub-agent、Hook 或长期记忆能力。
+`provider` 必须引用 `providers` 中已有的 `name`。`allowed_contacts` 使用微信会话显示名精确匹配；重名会话会安全拒绝。微信角色固定读取包内 `prompts/role.md`，多句气泡、专业回答格式和安全边界固定读取 `prompts/reply_policy.md`。每名好友使用独立并持久化的 MewCode Session，但微信好友始终没有 Bash、文件、MCP、Skills、Sub-agent、Hook 或长期记忆能力。
+
+每次模型成功生成最终回复后，程序会在清洗和气泡切分前，把原始文本打印到启动控制台的 `[wechat:model:raw-final]` 与 `[/wechat:model:raw-final]` 标签之间。这会在本机控制台显示好友对话内容，但不会额外写入日志文件或发送到远端。
 
 `info_tools.enabled` 默认是 `false`。启用后，微信侧只增加三个只读公共信息工具：本机／地点当前时间、Tavily 网页搜索和公开网页正文读取；不会继承终端 Coding Agent 的任何本地工具。建议只通过环境变量提供 Tavily Key：
 

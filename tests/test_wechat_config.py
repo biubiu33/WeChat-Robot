@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import fields
+
 import pytest
 
 from mewcode.config import ConfigError, _from_dict
-from mewcode.wechat.config import (
-    DEFAULT_SYSTEM_PROMPT,
-    WechatInfoConfig,
-    parse_wechat_config,
-)
+from mewcode.wechat.config import WechatInfoConfig, parse_wechat_config
 
 
 def provider() -> dict[str, object]:
@@ -46,22 +44,12 @@ def test_parse_enabled_wechat_config() -> None:
     )
 
     assert config.allowed_contacts == ("文件传输助手",)
-    assert config.system_prompt == DEFAULT_SYSTEM_PROMPT
+    assert "system_prompt" not in {field.name for field in fields(config)}
     assert config.task_timeout_seconds == 180
     assert config.max_reply_chars == 1500
 
 
-def test_default_persona_is_friendly_truthful_and_bounded() -> None:
-    assert "温暖、活泼" in DEFAULT_SYSTEM_PROMPT
-    assert "适度开玩笑" in DEFAULT_SYSTEM_PROMPT
-    assert "恋爱、亲属" in DEFAULT_SYSTEM_PROMPT
-    assert "不要虚构" in DEFAULT_SYSTEM_PROMPT
-    assert "上学、工作、购物、出行" in DEFAULT_SYSTEM_PROMPT
-    assert "如实说明你是 AI 助手" in DEFAULT_SYSTEM_PROMPT
-    assert "不能执行命令、读写文件或操作电脑" in DEFAULT_SYSTEM_PROMPT
-
-
-def test_explicit_system_prompt_still_overrides_default_persona() -> None:
+def test_legacy_system_prompt_is_ignored() -> None:
     config = parse_wechat_config(
         {
             "enabled": True,
@@ -72,7 +60,7 @@ def test_explicit_system_prompt_still_overrides_default_persona() -> None:
         {"chat"},
     )
 
-    assert config.system_prompt == "自定义角色"
+    assert "system_prompt" not in {field.name for field in fields(config)}
 
 
 @pytest.mark.parametrize(
