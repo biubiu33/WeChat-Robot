@@ -58,6 +58,7 @@ class WechatUiaDriver:
         if self._allowed_groups and self._group_sender_ocr is None:
             self._group_sender_ocr = GroupSenderOcr()
         self._signatures: dict[str, str] = {}
+        self._unread_counts: dict[str, int] = {}
         self._seen_messages: dict[str, set[str]] = {}
         self._group_snapshots: dict[str, list[VisibleMessage]] = {}
         self._group_baseline_ready: set[str] = set()
@@ -76,20 +77,26 @@ class WechatUiaDriver:
     def establish_baseline(self) -> None:
         with self._lock:
             rows = self._rows()
-            by_name = {row.name: row for row in rows}
             self._signatures = {row.name: row.signature for row in rows}
-            for name in self._allowed_groups:
-                row = by_name.get(name, ConversationRow(name, name))
+            self._unread_counts = {row.name: row.unread_count for row in rows}
+            current_name = getattr(
+                self._client, "current_conversation_name", lambda: ""
+            )()
+            current = next(
+                (row for row in rows if row.name == current_name),
+                None,
+            )
+            if current is not None and current.name in self._allowed_groups:
                 try:
-                    self._client.focus_conversation(replace(row, private=False))
-                    if self._client.current_conversation_is_private():
-                        continue
-                    messages = self._client.visible_text_messages(row)
-                    self._seen_messages[name] = {message.key for message in messages}
-                    self._group_snapshots[name] = list(messages)
-                    self._group_baseline_ready.add(name)
-                except Exception:  # noqa: BLE001 - defer unavailable baseline safely
-                    self._seen_messages.setdefault(name, set())
+                    if not self._client.current_conversation_is_private():
+                        messages = self._client.visible_text_messages(current)
+                        self._seen_messages[current.name] = {
+                            message.key for message in messages
+                        }
+                        self._group_snapshots[current.name] = list(messages)
+                        self._group_baseline_ready.add(current.name)
+                except Exception:  # noqa: BLE001 - retry safely on the next scan
+                    pass
             self._baseline_ready = True
 
     def wait_for_events(self, stop: threading.Event) -> list[WechatDesktopEvent]:
@@ -146,7 +153,9 @@ class WechatUiaDriver:
         events: list[WechatDesktopEvent] = []
         for row in rows:
             previous = self._signatures.get(row.name)
+            previous_unread = self._unread_counts.get(row.name, row.unread_count)
             self._signatures[row.name] = row.signature
+            self._unread_counts[row.name] = row.unread_count
             expected_private = self._expected_private(row.name)
             if expected_private is None or counts[row.name] != 1:
                 continue
@@ -183,8 +192,13 @@ class WechatUiaDriver:
             if row.name not in self._group_baseline_ready:
                 seen.update(message.key for message in resolved)
                 self._group_baseline_ready.add(row.name)
-                continue
-            new_messages = [message for message in resolved if message.key not in seen]
+                unread_delta = max(0, row.unread_count - previous_unread)
+                new_messages = resolved[-unread_delta:] if unread_delta else []
+            else:
+                new_messages = [
+                    message for message in resolved if message.key not in seen
+                ]
+            seen.clear()
             seen.update(message.key for message in resolved)
             for index, message in enumerate(new_messages):
                 if (

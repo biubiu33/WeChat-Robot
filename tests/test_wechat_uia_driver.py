@@ -49,6 +49,9 @@ class FakeClient:
     def current_conversation_is_private(self) -> bool:
         return self.private
 
+    def current_conversation_name(self) -> str:
+        return self.current
+
     def visible_text_messages(self, row: ConversationRow) -> list[VisibleMessage]:
         return list(self.messages.get(row.name, []))
 
@@ -275,7 +278,11 @@ def test_group_driver_emits_context_events_and_only_marks_exact_mentions() -> No
     )
     driver.establish_baseline()
 
-    client.rows = [ConversationRow("group", "测试群聊", signature="new")]
+    assert client.current == ""
+
+    client.rows = [
+        ConversationRow("group", "测试群聊", signature="new", unread_count=3)
+    ]
     client.messages["测试群聊"] = [
         VisibleMessage(
             "old-runtime-changed", "group", "旧消息", True, sender_name="张三"
@@ -324,7 +331,9 @@ def test_group_driver_ignores_unknown_sender_even_with_exact_mention() -> None:
         group_sender_ocr=PassthroughGroupOcr(),
     )
     driver.establish_baseline()
-    client.rows = [ConversationRow("group", "测试群聊", signature="new")]
+    client.rows = [
+        ConversationRow("group", "测试群聊", signature="new", unread_count=1)
+    ]
     client.messages["测试群聊"] = [
         VisibleMessage(
             "unknown",
@@ -336,6 +345,76 @@ def test_group_driver_ignores_unknown_sender_even_with_exact_mention() -> None:
     ]
 
     assert driver.wait_for_events(threading.Event()) == []
+
+
+def test_already_open_group_detects_new_message_without_unread_count() -> None:
+    client = FakeClient()
+    client.current = "测试群聊"
+    client.private = False
+    client.rows = [ConversationRow("group", "测试群聊", signature="old")]
+    client.messages["测试群聊"] = [
+        VisibleMessage("old", "group", "旧消息", True, sender_name="张三")
+    ]
+    client.message_list_bounds = lambda: (0, 0, 800, 600)
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts=set(),
+        allowed_groups={"测试群聊"},
+        self_names={"机器人"},
+        group_sender_ocr=PassthroughGroupOcr(),
+    )
+    driver.establish_baseline()
+
+    client.rows = [ConversationRow("group", "测试群聊", signature="new")]
+    client.messages["测试群聊"] = [
+        VisibleMessage("old-changed", "group", "旧消息", True, sender_name="张三"),
+        VisibleMessage("new", "group", "@机器人 你好", True, sender_name="张三"),
+    ]
+
+    events = driver.wait_for_events(threading.Event())
+
+    assert [event.text for event in events] == ["你好"]
+
+
+def test_group_runtime_id_can_be_reused_after_message_leaves_view() -> None:
+    client = FakeClient()
+    client.current = "测试群聊"
+    client.private = False
+    client.rows = [ConversationRow("group", "测试群聊", signature="baseline")]
+    client.messages["测试群聊"] = []
+    client.message_list_bounds = lambda: (0, 0, 800, 600)
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts=set(),
+        allowed_groups={"测试群聊"},
+        self_names={"机器人"},
+        group_sender_ocr=PassthroughGroupOcr(),
+    )
+    driver.establish_baseline()
+
+    client.rows = [ConversationRow("group", "测试群聊", signature="first")]
+    client.messages["测试群聊"] = [
+        VisibleMessage("reused", "group", "@机器人 第一轮", True, sender_name="张三")
+    ]
+    first = driver.wait_for_events(threading.Event())
+
+    client.rows = [ConversationRow("group", "测试群聊", signature="reply")]
+    client.messages["测试群聊"] = [
+        VisibleMessage("outgoing", "group", "第一轮回复", False)
+    ]
+    assert driver.wait_for_events(threading.Event()) == []
+
+    client.rows = [ConversationRow("group", "测试群聊", signature="second")]
+    client.messages["测试群聊"] = [
+        VisibleMessage("outgoing", "group", "第一轮回复", False),
+        VisibleMessage("reused", "group", "@机器人 第二轮", True, sender_name="张三"),
+    ]
+    second = driver.wait_for_events(threading.Event())
+
+    assert [event.text for event in first] == ["第一轮"]
+    assert [event.text for event in second] == ["第二轮"]
 
 
 def test_strip_self_mention_is_exact_and_preserves_other_mentions() -> None:
