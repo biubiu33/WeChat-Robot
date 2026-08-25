@@ -338,6 +338,9 @@ class Agent:
                         await asyncio.gather(next_event, return_exceptions=True)
                     yield _StreamOutcome("", [], None, False)
                     return
+                cancelled.cancel()
+                await asyncio.gather(cancelled, return_exceptions=True)
+                cancelled = None
                 try:
                     event = await next_event
                 except StopAsyncIteration:

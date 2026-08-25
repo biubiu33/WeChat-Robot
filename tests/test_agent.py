@@ -197,6 +197,27 @@ async def test_react_loop_runs_multiple_rounds_and_reports_events() -> None:
 
 
 @async_test
+async def test_stream_does_not_leave_cancel_wait_tasks_pending() -> None:
+    provider = FakeProvider(
+        [[StreamEvent(text="一"), StreamEvent(text="二"), StreamEvent(done=True)]]
+    )
+    conv = Conversation()
+    conv.add_user("测试流清理")
+
+    await collect(Agent(provider, Registry()), conv)
+    await asyncio.sleep(0)
+
+    current = asyncio.current_task()
+    leaked = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not current
+        and getattr(task.get_coro(), "__qualname__", "") == "Event.wait"
+    ]
+    assert leaked == []
+
+
+@async_test
 async def test_iteration_limit_stops_after_maximum_rounds() -> None:
     provider = RepeatingToolProvider(ToolCall("id", "known", "{}"))
     registry = Registry()
