@@ -14,7 +14,16 @@ from tzlocal import get_localzone_name
 
 from mewcode.agent import NOTICE_CANCELLED, Agent, Completion, Phase
 from mewcode.config import ConfigError, ProviderConfig
-from mewcode.llm import ImageContent, Message, Provider, ToolCall, ToolResult, new_provider
+from mewcode.context.budget import AUTO_RESERVE, TokenEstimator
+from mewcode.llm import (
+    ImageContent,
+    Message,
+    Provider,
+    ToolCall,
+    ToolResult,
+    message_request_chars,
+    new_provider,
+)
 from mewcode.permission import Mode
 from mewcode.session.archive import ArchiveWriter
 from mewcode.session.repository import SessionRepository
@@ -63,6 +72,10 @@ class WechatImageArchiveError(WechatAgentError):
     pass
 
 
+class WechatReferenceTooLongError(WechatAgentError):
+    pass
+
+
 class WechatAgentRuntime:
     def __init__(
         self,
@@ -93,6 +106,7 @@ class WechatAgentRuntime:
         on_tool_stage: Callable[[str], Awaitable[None]] | None = None,
         *,
         images: Sequence[ImageContent] = (),
+        reference_turn: bool = False,
     ) -> WechatReply:
         return await self._reply(
             conversation_name,
@@ -102,6 +116,7 @@ class WechatAgentRuntime:
             tool_text=text,
             group=False,
             images=images,
+            reference_turn=reference_turn,
         )
 
     async def reply_group(
@@ -112,6 +127,9 @@ class WechatAgentRuntime:
         history: Sequence[GroupHistoryItem],
         cancel: asyncio.Event,
         on_tool_stage: Callable[[str], Awaitable[None]] | None = None,
+        *,
+        images: Sequence[ImageContent] = (),
+        reference_turn: bool = False,
     ) -> WechatReply:
         prompt = _group_prompt(sender_name, text, history)
         return await self._reply(
@@ -121,7 +139,8 @@ class WechatAgentRuntime:
             on_tool_stage,
             tool_text=text,
             group=True,
-            images=(),
+            images=images,
+            reference_turn=reference_turn,
         )
 
     async def _reply(
@@ -134,7 +153,19 @@ class WechatAgentRuntime:
         tool_text: str,
         group: bool,
         images: Sequence[ImageContent],
+        reference_turn: bool,
     ) -> WechatReply:
+        if reference_turn:
+            estimator = TokenEstimator()
+            request_tokens = estimator.estimate(
+                message_request_chars(Message("user", prompt, images=list(images)))
+            )
+            reserve = min(
+                AUTO_RESERVE,
+                max(1, self._provider_config.context_window // 4),
+            )
+            if request_tokens > self._provider_config.context_window - reserve:
+                raise WechatReferenceTooLongError("引用内容超过模型输入预算")
         turn = (
             self._info_services.new_turn(conversation_name, tool_text)
             if self._info_services is not None
@@ -331,7 +362,7 @@ class WechatAgentRuntime:
             self._provider,
             self._provider_config.context_window,
             enable_title=False,
-            archive_message_transform=_wechat_archive_message,
+            archive_message_transform=_wechat_ephemeral_archive_message,
             restore_message_filter=_wechat_history_messages,
             transient_tool_results=turn is not None,
         )
@@ -427,6 +458,13 @@ def _wechat_archive_message(message: Message) -> Message | None:
     if message.role == "assistant":
         return None
     return message
+
+
+def _wechat_ephemeral_archive_message(message: Message) -> Message | None:
+    archived = _wechat_archive_message(message)
+    if archived is None or not archived.images:
+        return archived
+    return replace(archived, images=[])
 
 
 def _wechat_history_messages(messages: list[Message]) -> list[Message]:
@@ -561,6 +599,7 @@ __all__ = [
     "WechatAgentError",
     "WechatAgentRuntime",
     "WechatImageArchiveError",
+    "WechatReferenceTooLongError",
     "WechatTurnCancelled",
     "_build_wechat_reply",
     "_chat_delay",

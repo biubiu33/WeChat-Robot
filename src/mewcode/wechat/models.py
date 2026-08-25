@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+
+ReferenceKind = Literal["text", "image", "unsupported"]
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,14 @@ class ConversationRow:
 
 
 @dataclass(frozen=True)
+class MessageReference:
+    sender_name: str
+    preview: str
+    kind: ReferenceKind
+    unsupported_type: str = ""
+
+
+@dataclass(frozen=True)
 class VisibleMessage:
     key: str
     conversation_key: str
@@ -25,6 +37,8 @@ class VisibleMessage:
     kind: str = "text"
     sender_name: str = ""
     bounds: tuple[int, int, int, int] | None = None
+    reference: MessageReference | None = None
+    raw_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,12 +57,22 @@ class WechatDesktopEvent:
     message_key: str = ""
     message_kind: str = "text"
     bounds: tuple[int, int, int, int] | None = None
+    reference: MessageReference | None = None
 
 
 @dataclass(frozen=True)
 class ImageCapture:
     path: Path
     degraded: bool
+
+
+@dataclass(frozen=True)
+class ResolvedReference:
+    source: MessageReference
+    content: str = ""
+    capture: ImageCapture | None = None
+    degraded: bool = False
+    strategy: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,6 +105,7 @@ class QueuedBatch:
     sender_name: str = ""
     private: bool = True
     group_history: tuple[GroupHistoryItem, ...] = ()
+    immutable: bool = False
 
     @property
     def text(self) -> str:
@@ -93,6 +118,12 @@ class QueuedBatch:
         return tuple(
             event for event in self.events if event.message_kind == "image"
         )
+
+    @property
+    def reference_event(self) -> WechatDesktopEvent | None:
+        if len(self.events) != 1 or self.events[0].reference is None:
+            return None
+        return self.events[0]
 
 
 @dataclass(frozen=True)
@@ -107,8 +138,11 @@ __all__ = [
     "ConversationRow",
     "GroupHistoryItem",
     "ImageCapture",
+    "MessageReference",
     "PendingBatch",
     "QueuedBatch",
+    "ReferenceKind",
+    "ResolvedReference",
     "VisibleMessage",
     "WechatDesktopEvent",
     "WechatReply",

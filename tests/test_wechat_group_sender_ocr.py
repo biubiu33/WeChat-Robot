@@ -66,3 +66,26 @@ def test_sender_resolution_rejects_low_confidence_or_outgoing_body() -> None:
     assert unknown.sender_name == ""
     assert outgoing.incoming is False
     assert outgoing.sender_name == ""
+
+
+def test_reference_sender_ocr_matches_flattened_raw_label() -> None:
+    raw = "@机器人 这是什么意思引用 李四 的消息：被引用的完整预览"
+    message = VisibleMessage(
+        "message-reference",
+        "group-1",
+        "@机器人 这是什么意思",
+        False,
+        bounds=(80, 100, 420, 190),
+        raw_text=raw,
+    )
+    lines = [
+        OcrTextLine("张三", 0.98, (82, 76, 125, 96)),
+        OcrTextLine("@机器人 这是什么意思", 0.99, (85, 105, 300, 135)),
+        OcrTextLine("被引用的完整预览", 0.98, (85, 145, 300, 180)),
+    ]
+
+    [resolved] = GroupSenderOcr.assign([message], lines, (0, 0, 800, 600))
+
+    assert resolved.text == "@机器人 这是什么意思"
+    assert resolved.incoming is True
+    assert resolved.sender_name == "张三"

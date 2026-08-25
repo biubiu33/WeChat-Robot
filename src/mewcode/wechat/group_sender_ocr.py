@@ -97,7 +97,14 @@ class GroupSenderOcr:
         lines: list[OcrTextLine],
         used: set[int],
     ) -> OcrTextLine | None:
-        if message.kind != "text" or not message.bounds or not message.text.strip():
+        body_texts = tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in (message.text, message.raw_text)
+                if value.strip()
+            )
+        )
+        if message.kind != "text" or not message.bounds or not body_texts:
             return None
         left, top, right, bottom = message.bounds
         geometric: list[tuple[float, OcrTextLine]] = []
@@ -105,7 +112,7 @@ class GroupSenderOcr:
         for line in lines:
             if id(line) in used or line.score < 0.6:
                 continue
-            similarity = cls._similarity(message.text, line.text)
+            similarity = max(cls._similarity(value, line.text) for value in body_texts)
             if similarity < 0.78:
                 continue
             ranked = (similarity * line.score, line)

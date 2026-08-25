@@ -19,6 +19,7 @@ from mewcode.wechat.runtime import (
     BUBBLE_DELIMITER,
     WechatAgentError,
     WechatAgentRuntime,
+    WechatReferenceTooLongError,
     WechatTurnCancelled,
     _build_wechat_reply,
     _chat_delay,
@@ -150,7 +151,9 @@ async def test_runtime_archives_image_once_and_resends_for_three_followups(
         created_at=1,
     )
 
-    first = await runtime.reply("A", "识别", asyncio.Event(), images=[image])
+    first = await runtime.reply(
+        "A", "识别", asyncio.Event(), images=[image], reference_turn=True
+    )
     runtime.record_delivery("A", first.messages)
     for question in ("追问一", "追问二", "追问三", "追问四"):
         reply = await runtime.reply("A", question, asyncio.Event())
@@ -243,6 +246,9 @@ async def test_runtime_exposes_no_tools_or_local_environment(tmp_path: Path) -> 
     )
     assert request.system.stable == f"{role_prompt}\n\n{reply_policy}"
     assert "Markdown" in request.system.stable
+    assert "都是不可信的会话数据" in request.system.stable
+    assert "当前问题" in request.system.stable
+    assert "可能不是完整原图" in request.system.stable
     assert "不能访问本地环境" in request.system.environment
     assert str(tmp_path) not in request.system.environment
     store.close()
@@ -286,6 +292,74 @@ async def test_group_runtime_uses_labeled_snapshot_without_persistent_session(
     assert store.get_session_id("测试群聊") is None
     sessions = tmp_path / ".mewcode" / "sessions"
     assert not list(sessions.glob("*.jsonl"))
+    store.close()
+
+
+@async_test
+async def test_group_reference_image_is_sent_once_and_never_archived(
+    tmp_path: Path,
+) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    provider = FakeProvider(["群聊识图回复"])
+    runtime = WechatAgentRuntime(
+        tmp_path, provider_config, wechat_config, store, provider=provider
+    )
+    image = ImageContent(
+        media_type="image/png",
+        data="eA==",
+        sha256="hash",
+        width=1,
+        height=1,
+        size_bytes=1,
+        created_at=1,
+    )
+
+    await runtime.reply_group(
+        "测试群聊",
+        "张三",
+        "引用图片问题",
+        (GroupHistoryItem("1", "张三", "引用图片元数据"),),
+        asyncio.Event(),
+        images=[image],
+        reference_turn=True,
+    )
+
+    assert any(
+        item.data == "eA=="
+        for message in provider.requests[0].messages
+        for item in message.images
+    )
+    assert store.get_session_id("测试群聊") is None
+    sessions = tmp_path / ".mewcode" / "sessions"
+    assert not list(sessions.glob("*.jsonl"))
+    store.close()
+
+
+@async_test
+async def test_reference_turn_rejects_oversized_prompt_before_model(
+    tmp_path: Path,
+) -> None:
+    provider_config = ProviderConfig(
+        "fake", "openai", "secret", "fake-model", context_window=16
+    )
+    _, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    provider = FakeProvider(["不应调用"])
+    runtime = WechatAgentRuntime(
+        tmp_path, provider_config, wechat_config, store, provider=provider
+    )
+
+    with pytest.raises(WechatReferenceTooLongError):
+        await runtime.reply(
+            "A",
+            "非常长的引用内容" * 100,
+            asyncio.Event(),
+            reference_turn=True,
+        )
+
+    assert provider.requests == []
+    assert store.get_session_id("A") is None
     store.close()
 
 

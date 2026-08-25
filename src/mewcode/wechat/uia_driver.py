@@ -12,9 +12,16 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from .group_sender_ocr import GroupSenderOcr
-from .models import ImageCapture, ConversationRow, VisibleMessage, WechatDesktopEvent
+from .models import (
+    ConversationRow,
+    ImageCapture,
+    ResolvedReference,
+    VisibleMessage,
+    WechatDesktopEvent,
+)
 from .shell_hook import WindowsShellHook
 from .uia_client import WechatUiaClient
+from .uia_client import WechatReferenceTargetError
 
 
 def strip_self_mention(
@@ -154,6 +161,49 @@ class WechatUiaDriver:
                 target_dir,
             )
 
+    def materialize_reference(
+        self,
+        event: WechatDesktopEvent,
+        target_dir: Path,
+    ) -> ResolvedReference:
+        reference = event.reference
+        allowed = (
+            event.conversation_name in self._allowed_contacts
+            if event.private and self._allowed_contacts is not None
+            else event.conversation_name in self._allowed_groups
+            if not event.private
+            else True
+        )
+        if (
+            reference is None
+            or not event.text.strip()
+            or not allowed
+            or (not event.private and (not event.is_at or not event.sender_name))
+        ):
+            raise WechatReferenceTargetError("引用消息未通过物化门禁")
+        with self._lock:
+            row = ConversationRow(
+                key=event.conversation_key,
+                name=event.conversation_name,
+                private=event.private,
+            )
+            current_text = event.text
+            parser = getattr(self._client, "_parse_reference_label", None)
+            parsed = parser(event.raw_text) if callable(parser) else None
+            if parsed is not None and parsed[1] == reference:
+                current_text = parsed[0]
+            result = self._client.resolve_reference(
+                row,
+                event.message_key,
+                event.bounds,
+                current_text,
+                reference,
+                target_dir,
+            )
+            if not self.validate_target(event):
+                raise WechatReferenceTargetError("引用物化后回复目标无法确认")
+            return result
+
     def send_group_first(
         self,
         event: WechatDesktopEvent,
@@ -268,8 +318,8 @@ class WechatUiaDriver:
         messages: list[VisibleMessage],
     ) -> list[VisibleMessage]:
         previous = self._group_snapshots.get(conversation_name, [])
-        previous_signatures = [(item.kind, item.text) for item in previous]
-        current_signatures = [(item.kind, item.text) for item in messages]
+        previous_signatures = [_message_signature(item) for item in previous]
+        current_signatures = [_message_signature(item) for item in messages]
         stable = list(messages)
         matcher = SequenceMatcher(
             None,
@@ -309,7 +359,10 @@ class WechatUiaDriver:
         text: str | None = None,
     ) -> WechatDesktopEvent:
         start = max(0, index - 4)
-        suffix = "\0".join(item.text for item in candidates[start : index + 1])
+        suffix = "\0".join(
+            repr(_message_signature(item))
+            for item in candidates[start : index + 1]
+        )
         fingerprint = hashlib.sha256(
             f"{row.name}\0{message.key}\0{message.sender_name}\0{suffix}".encode()
         ).hexdigest()
@@ -327,11 +380,23 @@ class WechatUiaDriver:
             incoming=True,
             private=private,
             is_at=is_at,
-            raw_text=message.text,
+            raw_text=message.raw_text or message.text,
             message_key=message.key,
             message_kind=message.kind,
             bounds=message.bounds,
+            reference=message.reference,
         )
+
+
+def _message_signature(message: VisibleMessage) -> tuple[str, str, str, str, str]:
+    reference = message.reference
+    return (
+        message.kind,
+        message.text,
+        reference.sender_name if reference is not None else "",
+        reference.kind if reference is not None else "",
+        reference.preview if reference is not None else "",
+    )
 
 
 __all__ = ["WechatUiaDriver", "strip_self_mention"]

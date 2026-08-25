@@ -11,7 +11,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .models import ConversationRow, ImageCapture, VisibleMessage
+from .models import (
+    ConversationRow,
+    ImageCapture,
+    MessageReference,
+    ReferenceKind,
+    ResolvedReference,
+    VisibleMessage,
+)
 
 SUPPORTED_WECHAT_VERSIONS = ("4.0.5.15", "4.1.9.30")
 MAIN_WINDOW_CLASS = "mmui::MainWindow"
@@ -31,6 +38,10 @@ MENTION_MARKERS = ("[有人@我]", "有人@我", "[Someone mentioned me]")
 
 
 class WechatUiaError(RuntimeError):
+    pass
+
+
+class WechatReferenceTargetError(WechatUiaError):
     pass
 
 
@@ -165,10 +176,16 @@ class WechatUiaClient:
             message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
             messages: list[VisibleMessage] = []
             for control in message_list.GetChildren():
+                raw_name = (control.Name or "").strip()
+                parsed_reference = self._parse_reference_label(raw_name)
                 kind = _control_message_kind(control)
                 if not kind:
                     continue
-                text = (control.Name or "").strip() if kind == "text" else "[图片]"
+                reference = None
+                if parsed_reference is not None:
+                    text, reference = parsed_reference
+                else:
+                    text = raw_name if kind == "text" else "[图片]"
                 if kind == "text" and not text:
                     continue
                 runtime_id = tuple(
@@ -183,9 +200,35 @@ class WechatUiaClient:
                         kind=kind,
                         sender_name=row.name if private else "",
                         bounds=self._bounds(control),
+                        reference=reference,
+                        raw_text=raw_name,
                     )
                 )
             return messages
+
+    @staticmethod
+    def _parse_reference_label(
+        content: str,
+    ) -> tuple[str, MessageReference] | None:
+        match = re.match(
+            r"^(?P<current>.*?)引用\s+(?P<sender>.+?)\s+的消息\s*[:：]\s*(?P<preview>.*)$",
+            str(content or ""),
+            re.DOTALL,
+        )
+        if match is None:
+            return None
+        current = match.group("current").strip()
+        sender = match.group("sender").strip()
+        preview = match.group("preview").strip()
+        if not sender:
+            return None
+        kind, unsupported_type = _reference_kind(preview)
+        return current, MessageReference(
+            sender,
+            preview,
+            kind,
+            unsupported_type,
+        )
 
     def visible_text_messages(self, row: ConversationRow) -> list[VisibleMessage]:
         return [
@@ -256,8 +299,331 @@ class WechatUiaClient:
         ]
         return close[0] if len(close) == 1 else None
 
+    def resolve_reference(
+        self,
+        row: ConversationRow,
+        message_key: str,
+        bounds: tuple[int, int, int, int] | None,
+        current_text: str,
+        reference: MessageReference,
+        target_dir: Path,
+    ) -> ResolvedReference:
+        with self._thread_context():
+            self.focus_conversation(row)
+            if not self.validate_target(row.name, bool(row.private)):
+                raise WechatReferenceTargetError("引用解析前回复目标无法确认")
+            if reference.kind == "unsupported":
+                return ResolvedReference(reference, strategy="unsupported")
+            target_dir.mkdir(parents=True, exist_ok=True)
+            window = self._main_window()
+            message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
+            control = self._find_reference_control(
+                message_list,
+                message_key,
+                bounds,
+                current_text,
+                reference,
+            )
+            if control is None:
+                return self._reference_preview(reference)
+            if reference.kind == "image":
+                return self._resolve_reference_image(
+                    row,
+                    control,
+                    message_key,
+                    current_text,
+                    reference,
+                    target_dir,
+                    window,
+                )
+
+            original = self._locate_referenced_original(control, reference)
+            reclassified_image: MessageReference | None = None
+            try:
+                if original is not None:
+                    original_name = str(getattr(original, "Name", "") or "").strip()
+                    parsed = self._parse_reference_label(original_name)
+                    original_text = parsed[0] if parsed is not None else original_name
+                    original_kind, unsupported = _original_kind(original)
+                    if original_kind == "text" and original_text:
+                        return ResolvedReference(
+                            reference,
+                            content=original_text,
+                            strategy="wechat_locate_original",
+                        )
+                    if original_kind == "unsupported":
+                        return ResolvedReference(
+                            MessageReference(
+                                reference.sender_name,
+                                reference.preview,
+                                "unsupported",
+                                unsupported,
+                            ),
+                            strategy="wechat_locate_original",
+                        )
+                    if original_kind == "image":
+                        reclassified_image = MessageReference(
+                            reference.sender_name,
+                            reference.preview,
+                            "image",
+                        )
+                        identity = (
+                            f"{row.key}\0{message_key}\0{self._bounds(original)}"
+                            "\0reclassified-reference"
+                        )
+                        target = target_dir / (
+                            hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+                            + ".png"
+                        )
+                        captured = self._capture_viewer(original, window, target)
+                        if captured:
+                            return ResolvedReference(
+                                reclassified_image,
+                                capture=ImageCapture(target, degraded=False),
+                                strategy="wechat_locate_original_image_viewer",
+                            )
+                        if captured is None:
+                            raise WechatReferenceTargetError(
+                                "重分类原图片查看器未安全恢复"
+                            )
+            finally:
+                self._restore_reference_target(row)
+            if reclassified_image is not None:
+                restored_window = self._main_window()
+                restored_list = self._find_unique(
+                    restored_window, automation_id=MESSAGE_LIST_ID
+                )
+                restored_quote = self._find_reference_control(
+                    restored_list,
+                    message_key,
+                    bounds,
+                    current_text,
+                    reference,
+                )
+                if restored_quote is None:
+                    return ResolvedReference(
+                        reclassified_image,
+                        strategy="unavailable",
+                    )
+                return self._resolve_reference_image(
+                    row,
+                    restored_quote,
+                    message_key,
+                    current_text,
+                    reference,
+                    target_dir,
+                    restored_window,
+                    resolved_source=reclassified_image,
+                )
+            return self._reference_preview(reference)
+
+    @staticmethod
+    def _reference_preview(reference: MessageReference) -> ResolvedReference:
+        if reference.kind != "text":
+            return ResolvedReference(reference, strategy="unavailable")
+        return ResolvedReference(
+            reference,
+            content=reference.preview,
+            degraded=True,
+            strategy="uia_reference_preview_only",
+        )
+
+    def _find_reference_control(
+        self,
+        message_list: Any,
+        message_key: str,
+        bounds: tuple[int, int, int, int] | None,
+        current_text: str,
+        reference: MessageReference,
+    ) -> Any | None:
+        exact: list[Any] = []
+        identity: list[Any] = []
+        for control in message_list.GetChildren():
+            parsed = self._parse_reference_label(
+                str(getattr(control, "Name", "") or "")
+            )
+            if parsed != (current_text, reference):
+                continue
+            identity.append(control)
+            runtime_id = ":".join(
+                map(str, tuple(int(value) for value in (control.GetRuntimeId() or ())))
+            )
+            if (message_key and runtime_id == message_key) or (
+                bounds is not None and _bounds_close(self._bounds(control), bounds)
+            ):
+                exact.append(control)
+        if len(exact) == 1:
+            return exact[0]
+        return identity[0] if len(identity) == 1 else None
+
+    @staticmethod
+    def _reference_activation_point(
+        bounds: tuple[int, int, int, int],
+    ) -> tuple[int, int]:
+        left, top, right, bottom = bounds
+        return (
+            int(left + (right - left) * 0.25),
+            int(top + (bottom - top) * 0.76),
+        )
+
+    @staticmethod
+    def _reference_thumbnail_bounds(
+        bounds: tuple[int, int, int, int],
+    ) -> tuple[int, int, int, int]:
+        left, top, right, bottom = bounds
+        return (left, int(top + (bottom - top) * 0.45), right, bottom)
+
+    def _locate_referenced_original(
+        self,
+        control: Any,
+        reference: MessageReference,
+    ) -> Any | None:
+        bounds = self._bounds(control)
+        if not _valid_bounds(bounds):
+            return None
+        assert bounds is not None
+        self._right_click_point(self._reference_activation_point(bounds))
+        time.sleep(0.3)
+        menu = self._find_desktop_control("定位到原文位置", "mmui::XMenuView")
+        if menu is None:
+            return None
+        self._click_preserving_cursor(menu)
+        time.sleep(0.6)
+        window = self._main_window()
+        message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
+        return self._pick_located_original_control(message_list, reference)
+
+    def _pick_located_original_control(
+        self,
+        message_list: Any,
+        reference: MessageReference,
+    ) -> Any | None:
+        preview = _normalized_reference_text(reference.preview)
+        matches: list[Any] = []
+        for control in message_list.GetChildren():
+            name = str(getattr(control, "Name", "") or "").strip()
+            if self._parse_reference_label(name) is not None:
+                continue
+            kind, _ = _original_kind(control)
+            if reference.kind == "image":
+                if kind == "image":
+                    matches.append(control)
+                continue
+            normalized = _normalized_reference_text(name)
+            if preview and normalized and (preview in normalized or normalized in preview):
+                matches.append(control)
+        return matches[0] if len(matches) == 1 else None
+
+    def _restore_reference_target(self, row: ConversationRow) -> None:
+        button = self._find_desktop_control("回到引用位置", "mmui::UnreadBarView")
+        if button is not None:
+            self._click_preserving_cursor(button)
+            time.sleep(0.3)
+        self.focus_conversation(row)
+        if not self.validate_target(row.name, bool(row.private)):
+            raise WechatReferenceTargetError("引用解析后回复目标无法恢复")
+
+    def _resolve_reference_image(
+        self,
+        row: ConversationRow,
+        control: Any,
+        message_key: str,
+        current_text: str,
+        reference: MessageReference,
+        target_dir: Path,
+        main_window: Any,
+        *,
+        resolved_source: MessageReference | None = None,
+    ) -> ResolvedReference:
+        source = resolved_source or reference
+        bounds = self._bounds(control)
+        if not _valid_bounds(bounds):
+            return ResolvedReference(source, strategy="unavailable")
+        assert bounds is not None
+        identity = f"{row.key}\0{message_key}\0{bounds}\0reference"
+        target = target_dir / (
+            hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16] + ".png"
+        )
+        direct = self._capture_viewer_from_point(
+            self._reference_activation_point(bounds), main_window, target
+        )
+        if direct:
+            if not self.validate_target(row.name, bool(row.private)):
+                target.unlink(missing_ok=True)
+                raise WechatReferenceTargetError("引用大图后回复目标已变化")
+            return ResolvedReference(
+                source,
+                capture=ImageCapture(target, degraded=False),
+                strategy="wechat_reference_image_viewer",
+            )
+        if direct is None:
+            raise WechatReferenceTargetError("引用大图查看器未安全恢复")
+        if not self.validate_target(row.name, bool(row.private)):
+            raise WechatReferenceTargetError("引用大图失败后回复目标已变化")
+
+        original = self._locate_referenced_original(control, reference)
+        try:
+            if original is not None and _original_kind(original)[0] == "image":
+                original_target = target.with_stem(target.stem + "-original")
+                captured = self._capture_viewer(original, main_window, original_target)
+                if captured:
+                    return ResolvedReference(
+                        source,
+                        capture=ImageCapture(original_target, degraded=False),
+                        strategy="wechat_locate_original_image_viewer",
+                    )
+                if captured is None:
+                    raise WechatReferenceTargetError("原图片查看器未安全恢复")
+        finally:
+            self._restore_reference_target(row)
+
+        window = self._main_window()
+        message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
+        quote = self._find_reference_control(
+            message_list,
+            message_key,
+            bounds,
+            current_text,
+            reference,
+        )
+        quote_bounds = self._bounds(quote) if quote is not None else None
+        if not _valid_bounds(quote_bounds):
+            return ResolvedReference(source, strategy="unavailable")
+        assert quote_bounds is not None
+        thumb_target = target.with_stem(target.stem + "-thumbnail")
+        if self._capture_bounds(
+            self._reference_thumbnail_bounds(quote_bounds), thumb_target
+        ):
+            return ResolvedReference(
+                source,
+                capture=ImageCapture(thumb_target, degraded=True),
+                degraded=True,
+                strategy="uia_reference_thumbnail",
+            )
+        return ResolvedReference(source, strategy="unavailable")
+
     def _capture_viewer(
         self, control: Any, main_window: Any, target: Path
+    ) -> bool | None:
+        return self._capture_viewer_action(
+            lambda: self._click_preserving_cursor(control), main_window, target
+        )
+
+    def _capture_viewer_from_point(
+        self,
+        point: tuple[int, int],
+        main_window: Any,
+        target: Path,
+    ) -> bool | None:
+        return self._capture_viewer_action(
+            lambda: self._left_click_point(point), main_window, target
+        )
+
+    def _capture_viewer_action(
+        self,
+        click: Any,
+        main_window: Any,
+        target: Path,
     ) -> bool | None:
         try:
             import win32gui  # type: ignore[import-untyped]
@@ -265,7 +631,7 @@ class WechatUiaClient:
 
             main_hwnd = int(main_window.NativeWindowHandle or 0)
             visible_before = _visible_window_handles()
-            self._click_preserving_cursor(control)
+            click()
             time.sleep(0.6)
             viewer_hwnd = self._opened_image_viewer(main_hwnd, visible_before)
             if not viewer_hwnd:
@@ -299,6 +665,43 @@ class WechatUiaClient:
                 pass
             target.unlink(missing_ok=True)
             return None
+
+    @staticmethod
+    def _left_click_point(point: tuple[int, int]) -> None:
+        import win32api  # type: ignore[import-untyped]
+        import win32con  # type: ignore[import-untyped]
+
+        cursor = win32api.GetCursorPos()
+        try:
+            win32api.SetCursorPos(point)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        finally:
+            win32api.SetCursorPos(cursor)
+
+    @staticmethod
+    def _right_click_point(point: tuple[int, int]) -> None:
+        import win32api  # type: ignore[import-untyped]
+        import win32con  # type: ignore[import-untyped]
+
+        cursor = win32api.GetCursorPos()
+        try:
+            win32api.SetCursorPos(point)
+            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+        finally:
+            win32api.SetCursorPos(cursor)
+
+    def _find_desktop_control(self, name: str, class_name: str) -> Any | None:
+        root = self._auto.GetRootControl()
+        controls = [root, *self._walk(root)]
+        matches = [
+            control
+            for control in controls
+            if str(getattr(control, "Name", "") or "") == name
+            and str(getattr(control, "ClassName", "") or "") == class_name
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _opened_image_viewer(
         self,
@@ -842,14 +1245,63 @@ def _valid_bounds(bounds: tuple[int, int, int, int] | None) -> bool:
 
 def _control_message_kind(control: Any) -> str:
     class_name = str(getattr(control, "ClassName", ""))
+    name = str(getattr(control, "Name", "") or "").strip()
+    if WechatUiaClient._parse_reference_label(name) is not None:
+        return "text"
     if class_name == "mmui::ChatTextItemView":
         return "text"
     if class_name == IMAGE_ITEM_CLASS:
         return "image"
-    name = str(getattr(control, "Name", "") or "").strip().casefold()
-    if class_name == REFER_IMAGE_ITEM_CLASS and name in {"图片", "image"}:
+    if class_name == REFER_IMAGE_ITEM_CLASS and name.casefold() in {"图片", "image"}:
         return "image"
     return ""
+
+
+def _reference_kind(preview: str) -> tuple[ReferenceKind, str]:
+    value = str(preview or "").strip()
+    folded = value.strip("[]【】").strip().casefold()
+    if folded in {"图片", "image", "[图片]", "[image]"}:
+        return "image", ""
+    markers = {
+        "语音": "voice",
+        "voice": "voice",
+        "视频": "video",
+        "video": "video",
+        "文件": "file",
+        "file": "file",
+        "分享卡片": "share_card",
+        "share card": "share_card",
+    }
+    if folded in markers:
+        return "unsupported", markers[folded]
+    if re.search(
+        r"\.(?:docx?|pdf|xlsx?|pptx?|txt|md|csv|zip|rar|7z)$",
+        value,
+        re.IGNORECASE,
+    ):
+        return "unsupported", "file"
+    return "text", ""
+
+
+def _original_kind(control: Any) -> tuple[ReferenceKind, str]:
+    class_name = str(getattr(control, "ClassName", "") or "").casefold()
+    name = str(getattr(control, "Name", "") or "").strip()
+    if _control_message_kind(control) == "image":
+        return "image", ""
+    if "voice" in class_name or name.casefold() in {"语音", "voice"}:
+        return "unsupported", "voice"
+    if "video" in class_name or name.casefold() in {"视频", "video"}:
+        return "unsupported", "video"
+    if "file" in class_name:
+        return "unsupported", "file"
+    parsed = WechatUiaClient._parse_reference_label(name)
+    if parsed is not None:
+        return "text", ""
+    return _reference_kind(name)
+
+
+def _normalized_reference_text(value: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", str(value or "").casefold())
 
 
 def _bounds_close(
@@ -881,4 +1333,5 @@ __all__ = [
     "SUPPORTED_WECHAT_VERSIONS",
     "WechatUiaClient",
     "WechatUiaError",
+    "WechatReferenceTargetError",
 ]

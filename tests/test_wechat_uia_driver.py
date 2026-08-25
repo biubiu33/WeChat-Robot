@@ -8,7 +8,13 @@ from typing import ClassVar
 
 import pytest
 
-from mewcode.wechat.models import ConversationRow, QueuedBatch, VisibleMessage
+from mewcode.wechat.models import (
+    ConversationRow,
+    MessageReference,
+    QueuedBatch,
+    ResolvedReference,
+    VisibleMessage,
+)
 from mewcode.wechat.uia_client import (
     INPUT_CLASS,
     INPUT_ID,
@@ -18,6 +24,7 @@ from mewcode.wechat.uia_client import (
     SUPPORTED_WECHAT_VERSIONS,
     WechatUiaClient,
     WechatUiaError,
+    WechatReferenceTargetError,
 )
 from mewcode.wechat.uia_driver import WechatUiaDriver, strip_self_mention
 
@@ -171,6 +178,319 @@ def test_image_event_keeps_identity_and_batch_text_excludes_placeholder() -> Non
     assert batch.image_events == (event,)
 
 
+def test_reference_model_and_batch_keep_one_layer() -> None:
+    reference = MessageReference("Alice", "Bob 引用 Carol 的消息：原文", "text")
+    visible = VisibleMessage(
+        "quote-1",
+        "row-a",
+        "你怎么看",
+        True,
+        reference=reference,
+    )
+    event = WechatUiaDriver._event(
+        ConversationRow("row-a", "好友A"), visible, [visible], 0
+    )
+    batch = QueuedBatch("好友A", (event,), 0, 0, immutable=True)
+
+    assert event.reference == reference
+    assert batch.reference_event == event
+    assert batch.image_events == ()
+
+
+def test_flattened_reference_label_separates_current_and_one_preview() -> None:
+    parsed = WechatUiaClient._parse_reference_label(
+        "测试引用引用 Alice 的消息 : Bob 引用 Carol 的消息 : 完整原文"
+    )
+
+    assert parsed == (
+        "测试引用",
+        MessageReference(
+            "Alice",
+            "Bob 引用 Carol 的消息 : 完整原文",
+            "text",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("preview", "kind", "unsupported"),
+    [
+        ("图片", "image", ""),
+        ("Image", "image", ""),
+        ("语音", "unsupported", "voice"),
+        ("[视频]", "unsupported", "video"),
+        ("【分享卡片】", "unsupported", "share_card"),
+        ("[文件]", "unsupported", "file"),
+        ("报告.pdf", "unsupported", "file"),
+        ("普通文字", "text", ""),
+    ],
+)
+def test_reference_label_classifies_supported_scope(
+    preview: str, kind: str, unsupported: str
+) -> None:
+    parsed = WechatUiaClient._parse_reference_label(
+        f"问题引用 Alice 的消息：{preview}"
+    )
+
+    assert parsed is not None
+    assert parsed[1].kind == kind
+    assert parsed[1].unsupported_type == unsupported
+
+
+def test_same_question_with_different_references_has_distinct_fingerprint() -> None:
+    row = ConversationRow("row-a", "好友A")
+    left = VisibleMessage(
+        "same-runtime",
+        "row-a",
+        "怎么看",
+        True,
+        reference=MessageReference("Alice", "甲", "text"),
+    )
+    right = VisibleMessage(
+        "same-runtime",
+        "row-a",
+        "怎么看",
+        True,
+        reference=MessageReference("Bob", "乙", "text"),
+    )
+
+    assert WechatUiaDriver._event(row, left, [left], 0).fingerprint != (
+        WechatUiaDriver._event(row, right, [right], 0).fingerprint
+    )
+
+
+def test_reference_control_requires_exact_snapshot_identity() -> None:
+    reference = MessageReference("Alice", "原文", "text")
+
+    def control(runtime: int, name: str):
+        return SimpleNamespace(
+            Name=name,
+            GetRuntimeId=lambda: [runtime],
+            BoundingRectangle=SimpleNamespace(
+                left=0, top=0, right=100, bottom=100
+            ),
+        )
+
+    wanted = control(1, "问题引用 Alice 的消息：原文")
+    wrong_sender = control(2, "问题引用 Bob 的消息：原文")
+    message_list = SimpleNamespace(GetChildren=lambda: [wanted, wrong_sender])
+    client = object.__new__(WechatUiaClient)
+
+    assert client._find_reference_control(
+        message_list, "1", (0, 0, 100, 100), "问题", reference
+    ) is wanted
+    assert client._find_reference_control(
+        message_list, "2", (0, 0, 100, 100), "问题", reference
+    ) is wanted
+
+
+def test_reference_activation_targets_quoted_lower_region() -> None:
+    assert WechatUiaClient._reference_activation_point((100, 200, 500, 400)) == (
+        200,
+        352,
+    )
+
+
+def _reference_image_client(calls: list[str]) -> WechatUiaClient:
+    client = object.__new__(WechatUiaClient)
+    client._bounds = lambda control: control.bounds
+    client.validate_target = lambda *_: True
+    client._capture_viewer_from_point = (
+        lambda point, window, target: calls.append("quote_viewer") or False
+    )
+    client._locate_referenced_original = (
+        lambda control, reference: calls.append("locate") or None
+    )
+    client._restore_reference_target = lambda row: calls.append("restore")
+    client._main_window = lambda: object()
+    client._find_unique = lambda *_, **__: object()
+    client._find_reference_control = lambda *args: args[0].quote
+    client._capture_bounds = (
+        lambda bounds, target: calls.append("thumbnail") or target.write_bytes(b"png") > 0
+    )
+    return client
+
+
+def test_referenced_image_uses_direct_viewer_without_fallback(tmp_path: Path) -> None:
+    calls: list[str] = []
+    client = _reference_image_client(calls)
+    client._capture_viewer_from_point = (
+        lambda point, window, target: calls.append("quote_viewer") or target.write_bytes(b"png") > 0
+    )
+    control = SimpleNamespace(bounds=(0, 0, 100, 100))
+    reference = MessageReference("Alice", "图片", "image")
+
+    resolved = client._resolve_reference_image(
+        ConversationRow("row", "好友A", private=True),
+        control,
+        "key",
+        "问题",
+        reference,
+        tmp_path,
+        object(),
+    )
+
+    assert resolved.capture is not None and resolved.degraded is False
+    assert calls == ["quote_viewer"]
+
+
+def test_referenced_image_falls_back_in_strict_order(tmp_path: Path) -> None:
+    calls: list[str] = []
+    client = _reference_image_client(calls)
+    original = SimpleNamespace(
+        bounds=(0, 0, 100, 100),
+        ClassName="mmui::ChatImageItemView",
+        Name="图片",
+    )
+    client._locate_referenced_original = (
+        lambda control, reference: calls.append("locate") or original
+    )
+    client._capture_viewer = (
+        lambda control, window, target: calls.append("original_viewer") or False
+    )
+    restored = SimpleNamespace(quote=SimpleNamespace(bounds=(0, 0, 100, 100)))
+    client._find_unique = lambda *_, **__: restored
+    control = SimpleNamespace(bounds=(0, 0, 100, 100))
+    reference = MessageReference("Alice", "图片", "image")
+
+    resolved = client._resolve_reference_image(
+        ConversationRow("row", "好友A", private=True),
+        control,
+        "key",
+        "问题",
+        reference,
+        tmp_path,
+        object(),
+    )
+
+    assert resolved.capture is not None and resolved.degraded is True
+    assert calls == [
+        "quote_viewer",
+        "locate",
+        "original_viewer",
+        "restore",
+        "thumbnail",
+    ]
+
+
+def test_referenced_image_unsafe_viewer_stops_without_fallback(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    client = _reference_image_client(calls)
+    client._capture_viewer_from_point = (
+        lambda point, window, target: calls.append("quote_viewer") or None
+    )
+
+    with pytest.raises(WechatReferenceTargetError):
+        client._resolve_reference_image(
+            ConversationRow("row", "好友A", private=True),
+            SimpleNamespace(bounds=(0, 0, 100, 100)),
+            "key",
+            "问题",
+            MessageReference("Alice", "图片", "image"),
+            tmp_path,
+            object(),
+        )
+
+    assert calls == ["quote_viewer"]
+    assert WechatUiaClient._reference_thumbnail_bounds((100, 200, 500, 400)) == (
+        100,
+        290,
+        500,
+        400,
+    )
+
+
+def test_driver_materializes_only_authorized_reference(tmp_path: Path) -> None:
+    client = FakeClient()
+    client.current = "好友A"
+    reference = MessageReference("Alice", "原文", "text")
+    resolved = ResolvedReference(reference, content="完整原文")
+    calls = []
+    client.resolve_reference = lambda *args: calls.append(args) or resolved
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts={"好友A"},
+    )
+    visible = VisibleMessage(
+        "quote",
+        "row-a",
+        "问题",
+        True,
+        reference=reference,
+    )
+    event = WechatUiaDriver._event(client.rows[0], visible, [visible], 0)
+
+    assert driver.materialize_reference(event, tmp_path) == resolved
+    assert len(calls) == 1
+
+    blocked = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts={"其他人"},
+    )
+    with pytest.raises(WechatReferenceTargetError):
+        blocked.materialize_reference(event, tmp_path)
+    assert len(calls) == 1
+
+
+def test_group_reference_materialization_reuses_unstripped_current_text(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    client.current = "测试群聊"
+    client.private = False
+    client.validate_target = lambda name: client.current == name
+    client._parse_reference_label = WechatUiaClient._parse_reference_label
+    reference = MessageReference("张三", "图片", "image")
+    resolved = ResolvedReference(reference, strategy="unavailable")
+    calls = []
+    client.resolve_reference = lambda *args: calls.append(args) or resolved
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts=set(),
+        allowed_groups={"测试群聊"},
+        self_names={"机器人"},
+        group_sender_ocr=PassthroughGroupOcr(),
+    )
+    visible = VisibleMessage(
+        "quote",
+        "group",
+        "@机器人 这张图是什么？",
+        True,
+        sender_name="李四",
+        bounds=(1, 2, 100, 120),
+        reference=reference,
+        raw_text="@机器人 这张图是什么？引用 张三 的消息：图片",
+    )
+    event = WechatUiaDriver._event(
+        ConversationRow("group", "测试群聊", private=False),
+        visible,
+        [visible],
+        0,
+        private=False,
+        is_at=True,
+        text="这张图是什么？",
+    )
+
+    assert driver.materialize_reference(event, tmp_path) == resolved
+    assert calls[0][3] == "@机器人 这张图是什么？"
+
+
+def test_image_reference_never_degrades_to_text_preview() -> None:
+    reference = MessageReference("张三", "图片", "image")
+
+    resolved = WechatUiaClient._reference_preview(reference)
+
+    assert resolved.capture is None
+    assert resolved.content == ""
+    assert resolved.degraded is False
+    assert resolved.strategy == "unavailable"
+
+
 def test_target_validation_and_send_are_delegated_under_original_name() -> None:
     client = FakeClient()
     driver = WechatUiaDriver(client, FakeHook())
@@ -316,8 +636,13 @@ def test_visible_messages_includes_plain_image_but_text_wrapper_filters_it() -> 
     assert [(item.key, item.kind, item.text) for item in visible] == [
         ("1", "text", "你好"),
         ("2", "image", "[图片]"),
+        ("4", "text", "请看这张图"),
     ]
-    assert [item.kind for item in client.visible_text_messages(row)] == ["text"]
+    assert [item.kind for item in client.visible_text_messages(row)] == [
+        "text",
+        "text",
+    ]
+    assert visible[-1].reference == MessageReference("张三", "图片", "image")
 
 
 def test_capture_private_image_falls_back_to_bubble(tmp_path: Path) -> None:
@@ -537,6 +862,53 @@ def test_group_driver_ignores_unknown_sender_even_with_exact_mention() -> None:
     ]
 
     assert driver.wait_for_events(threading.Event()) == []
+
+
+def test_group_reference_trigger_uses_only_current_question_mention() -> None:
+    client = FakeClient()
+    client.private = False
+    client.rows = [ConversationRow("group", "测试群聊", signature="old")]
+    client.messages["测试群聊"] = []
+    client.message_list_bounds = lambda: (0, 0, 800, 600)
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts=set(),
+        allowed_groups={"测试群聊"},
+        self_names={"biubiubiu仿生人"},
+        group_sender_ocr=PassthroughGroupOcr(),
+    )
+    driver.establish_baseline()
+    client.rows = [
+        ConversationRow("group", "测试群聊", signature="new", unread_count=2)
+    ]
+    client.messages["测试群聊"] = [
+        VisibleMessage(
+            "preview-at",
+            "group",
+            "你怎么看",
+            True,
+            sender_name="张三",
+            reference=MessageReference(
+                "李四", "@biubiubiu仿生人 只在引用里", "text"
+            ),
+        ),
+        VisibleMessage(
+            "current-at",
+            "group",
+            "@biubiubiu仿生人 解释一下",
+            True,
+            sender_name="张三",
+            reference=MessageReference("李四", "普通原文", "text"),
+        ),
+    ]
+
+    events = driver.wait_for_events(threading.Event())
+
+    assert [(item.text, item.is_at) for item in events] == [
+        ("你怎么看", False),
+        ("解释一下", True),
+    ]
 
 
 def test_already_open_group_detects_new_message_without_unread_count() -> None:
