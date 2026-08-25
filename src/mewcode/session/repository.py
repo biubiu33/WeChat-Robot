@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -128,6 +131,104 @@ class SessionRepository:
         except OSError:
             return False
         return True
+
+    def reserve_image_bytes(
+        self,
+        session_id: str,
+        incoming_bytes: int,
+        limit_bytes: int = 256 * 1024 * 1024,
+    ) -> bool:
+        """Atomically clear oldest archived image data to make room for a batch."""
+        if (
+            not SESSION_ID_RE.fullmatch(session_id)
+            or isinstance(incoming_bytes, bool)
+            or not isinstance(incoming_bytes, int)
+            or incoming_bytes < 0
+            or isinstance(limit_bytes, bool)
+            or not isinstance(limit_bytes, int)
+            or limit_bytes < 0
+            or incoming_bytes > limit_bytes
+        ):
+            return False
+        path = paths_for(self._root, session_id).archive_path
+        if not path.exists():
+            return True
+        try:
+            original_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+
+        records: list[dict[str, object] | None] = []
+        candidates: list[tuple[dict[str, object], int]] = []
+        total = 0
+        for line in original_lines:
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError:
+                records.append(None)
+                continue
+            if not isinstance(raw, dict):
+                records.append(None)
+                continue
+            records.append(raw)
+            images = raw.get("images")
+            if not isinstance(images, list):
+                continue
+            for image in images:
+                if not isinstance(image, dict) or image.get("cleared") is True:
+                    continue
+                size = image.get("size_bytes")
+                data = image.get("data")
+                if (
+                    isinstance(size, bool)
+                    or not isinstance(size, int)
+                    or size < 0
+                    or not isinstance(data, str)
+                    or not data
+                ):
+                    continue
+                total += size
+                candidates.append((image, size))
+        if total + incoming_bytes <= limit_bytes:
+            return True
+
+        for image, size in candidates:
+            image["data"] = ""
+            image["cleared"] = True
+            total -= size
+            if total + incoming_bytes <= limit_bytes:
+                break
+        if total + incoming_bytes > limit_bytes:
+            return False
+
+        handle_id = -1
+        temp_path: Path | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle_id, temp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+            )
+            temp_path = Path(temp_name)
+            with os.fdopen(handle_id, "w", encoding="utf-8", newline="\n") as handle:
+                handle_id = -1
+                for original, record in zip(original_lines, records, strict=True):
+                    line = (
+                        json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+                        if record is not None
+                        else original
+                    )
+                    handle.write(f"{line}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, path)
+            return True
+        except OSError:
+            return False
+        finally:
+            if handle_id >= 0:
+                os.close(handle_id)
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     def cleanup_expired(self, now: datetime | None = None) -> list[str]:
         if not self._sessions_dir.is_dir():

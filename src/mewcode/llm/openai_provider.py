@@ -7,6 +7,7 @@ from typing import Any
 from mewcode.config import ProviderConfig
 
 from . import (
+    ImageContent,
     Request,
     StreamEvent,
     ToolCall,
@@ -109,6 +110,9 @@ def to_openai_messages(req: Request) -> list[dict[str, Any]]:
         messages.append({"role": "system", "content": req.system.context})
 
     for message in req.messages:
+        if message.images and message.role != "user":
+            raise ValueError("图片只能附加到用户消息")
+        image_blocks = _openai_image_blocks(message.images)
         if message.role == "assistant" and message.tool_calls:
             messages.append(
                 {
@@ -136,11 +140,52 @@ def to_openai_messages(req: Request) -> list[dict[str, Any]]:
                 }
                 for result in message.tool_results
             )
+        elif image_blocks:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": message.content or "请识别这张图片。",
+                        },
+                        *image_blocks,
+                    ],
+                }
+            )
+        elif message.images and not message.content:
+            messages.append({"role": "user", "content": "[图片数据已清理]"})
         else:
             messages.append({"role": message.role, "content": message.content})
     if req.reminder:
         messages.append({"role": "user", "content": req.reminder})
     return messages
+
+
+def _openai_image_blocks(images: list[ImageContent]) -> list[dict[str, Any]]:
+    supported = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    blocks: list[dict[str, Any]] = []
+    for image in images:
+        if image.media_type not in supported:
+            raise ValueError("图片格式不受支持")
+        if image.detail != "original":
+            raise ValueError("图片细节级别必须为 original")
+        if image.cleared:
+            if image.data:
+                raise ValueError("已清理图片仍包含数据")
+            continue
+        if not image.data:
+            raise ValueError("图片 Base64 为空")
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image.media_type};base64,{image.data}",
+                    "detail": "original",
+                },
+            }
+        )
+    return blocks
 
 
 def _accumulate_tool_call_deltas(

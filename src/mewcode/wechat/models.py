@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,15 @@ class WechatDesktopEvent:
     private: bool
     is_at: bool = False
     raw_text: str = ""
+    message_key: str = ""
+    message_kind: str = "text"
+    bounds: tuple[int, int, int, int] | None = None
+
+
+@dataclass(frozen=True)
+class ImageCapture:
+    path: Path
+    degraded: bool
 
 
 @dataclass(frozen=True)
@@ -74,7 +84,15 @@ class QueuedBatch:
 
     @property
     def text(self) -> str:
-        return "\n".join(event.text for event in self.events)
+        return "\n".join(
+            event.text for event in self.events if event.message_kind == "text"
+        )
+
+    @property
+    def image_events(self) -> tuple[WechatDesktopEvent, ...]:
+        return tuple(
+            event for event in self.events if event.message_kind == "image"
+        )
 
 
 @dataclass(frozen=True)
@@ -88,6 +106,7 @@ __all__ = [
     "ConversationBinding",
     "ConversationRow",
     "GroupHistoryItem",
+    "ImageCapture",
     "PendingBatch",
     "QueuedBatch",
     "VisibleMessage",

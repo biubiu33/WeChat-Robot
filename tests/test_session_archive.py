@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mewcode.llm import Message, ToolCall, ToolResult
+from mewcode.llm import ImageContent, Message, ToolCall, ToolResult
 from mewcode.session.archive import (
     ArchiveWriter,
     ArtifactRef,
@@ -105,3 +105,49 @@ def test_reader_skips_broken_tail_line(tmp_path: Path) -> None:
         json.loads(path.read_text(encoding="utf-8").splitlines()[0])["type"]
         == "message"
     )
+
+
+def test_archive_round_trips_image_data_and_cleared_placeholder(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    image = ImageContent(
+        media_type="image/png",
+        data="aGVsbG8=",
+        sha256="2cf24dba",
+        width=16,
+        height=12,
+        size_bytes=5,
+        created_at=123,
+        degraded=True,
+    )
+    writer = ArchiveWriter(path)
+
+    assert writer.append_message(
+        Message(role="user", content="看图", images=[image]), model="vision"
+    )
+    assert writer.last_append_ok
+    writer.close()
+
+    event = read_events(path)[0]
+    assert message_from_data(event.data) == Message(
+        role="user", content="看图", images=[image]
+    )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["images"][0]["data"] == "aGVsbG8="
+    assert raw["images"][0]["degraded"] is True
+
+    cleared = dict(raw)
+    cleared["images"] = [dict(raw["images"][0], data="", cleared=True)]
+    restored = message_from_data(cleared)
+    assert restored is not None
+    assert restored.images[0].cleared is True
+    assert restored.images[0].data == ""
+
+
+def test_archive_rejects_malformed_image_without_echoing_data() -> None:
+    assert message_from_data(
+        {
+            "role": "user",
+            "content": "bad",
+            "images": [{"media_type": "image/bmp", "data": "secret-base64"}],
+        }
+    ) is None

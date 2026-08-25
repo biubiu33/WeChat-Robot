@@ -12,7 +12,7 @@ import mewcode.wechat.runtime as wechat_runtime_module
 from mewcode.agent import Event, Phase, ToolEvent
 from mewcode.config import ConfigError, ProviderConfig
 from mewcode.conversation import Conversation
-from mewcode.llm import Message, Request, StreamEvent, ToolCall, ToolResult
+from mewcode.llm import ImageContent, Message, Request, StreamEvent, ToolCall, ToolResult
 from mewcode.wechat.config import WechatConfig
 from mewcode.wechat.models import GroupHistoryItem
 from mewcode.wechat.runtime import (
@@ -27,6 +27,7 @@ from mewcode.wechat.runtime import (
     _split_professional_text,
     _to_wechat_plain_text,
     _wechat_history_messages,
+    _wechat_active_image_messages,
 )
 from mewcode.wechat.store import WechatStateStore
 
@@ -108,6 +109,71 @@ def test_history_filter_drops_legacy_weather_tool_messages() -> None:
     ]
 
     assert _wechat_history_messages(messages) == [messages[0], messages[3]]
+
+
+def test_active_image_context_keeps_latest_for_three_text_turns() -> None:
+    image = ImageContent(
+        media_type="image/png",
+        data="eA==",
+        width=1,
+        height=1,
+        size_bytes=1,
+    )
+    messages = [Message("user", "图", images=[image])]
+    for index in range(3):
+        messages.append(Message("user", f"追问 {index}"))
+    kept = _wechat_active_image_messages(messages)
+    assert kept[0].images[0].data == "eA=="
+
+    expired = _wechat_active_image_messages([*messages, Message("user", "第四问")])
+    assert expired[0].images[0].cleared is True
+    assert expired[0].images[0].data == ""
+
+
+@async_test
+async def test_runtime_archives_image_once_and_resends_for_three_followups(
+    tmp_path: Path,
+) -> None:
+    provider_config, wechat_config = configs()
+    store = WechatStateStore(tmp_path)
+    provider = FakeProvider(["首答", "一", "二", "三", "四"])
+    runtime = WechatAgentRuntime(
+        tmp_path, provider_config, wechat_config, store, provider=provider
+    )
+    image = ImageContent(
+        media_type="image/png",
+        data="eA==",
+        sha256="hash",
+        width=1,
+        height=1,
+        size_bytes=1,
+        created_at=1,
+    )
+
+    first = await runtime.reply("A", "识别", asyncio.Event(), images=[image])
+    runtime.record_delivery("A", first.messages)
+    for question in ("追问一", "追问二", "追问三", "追问四"):
+        reply = await runtime.reply("A", question, asyncio.Event())
+        runtime.record_delivery("A", reply.messages)
+
+    assert [bool(request.messages[0].images) for request in provider.requests] == [
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+    assert [
+        any(image.data for message in request.messages for image in message.images)
+        for request in provider.requests
+    ] == [True, True, True, True, False]
+    session_id = store.get_session_id("A")
+    assert session_id is not None
+    archive = runtime._repository.paths_for(session_id).archive_path.read_text(
+        encoding="utf-8"
+    )
+    assert archive.count("eA==") == 1
+    store.close()
 
 
 @async_test

@@ -6,16 +6,19 @@ import ntpath
 import re
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
-from .models import ConversationRow, VisibleMessage
+from .models import ConversationRow, ImageCapture, VisibleMessage
 
 SUPPORTED_WECHAT_VERSIONS = ("4.0.5.15", "4.1.9.30")
 MAIN_WINDOW_CLASS = "mmui::MainWindow"
 SESSION_LIST_ID = "session_list"
 MESSAGE_LIST_ID = "chat_message_list"
+IMAGE_ITEM_CLASS = "mmui::ChatImageItemView"
+REFER_IMAGE_ITEM_CLASS = "mmui::ChatBubbleReferItemView"
 INPUT_ID = "chat_input_field"
 INPUT_CLASS = "mmui::ChatInputField"
 SEARCH_EDIT_CLASS = "mmui::XValidatorTextEdit"
@@ -153,7 +156,7 @@ class WechatUiaClient:
     def current_conversation_is_group(self) -> bool:
         return not self.current_conversation_is_private()
 
-    def visible_text_messages(self, row: ConversationRow) -> list[VisibleMessage]:
+    def visible_messages(self, row: ConversationRow) -> list[VisibleMessage]:
         with self._thread_context():
             if self.current_conversation_name() != row.name:
                 raise WechatUiaError("读取消息前目标会话已变化")
@@ -162,10 +165,11 @@ class WechatUiaClient:
             message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
             messages: list[VisibleMessage] = []
             for control in message_list.GetChildren():
-                if control.ClassName != "mmui::ChatTextItemView":
+                kind = _control_message_kind(control)
+                if not kind:
                     continue
-                text = (control.Name or "").strip()
-                if not text:
+                text = (control.Name or "").strip() if kind == "text" else "[图片]"
+                if kind == "text" and not text:
                     continue
                 runtime_id = tuple(
                     int(value) for value in (control.GetRuntimeId() or ())
@@ -176,11 +180,218 @@ class WechatUiaClient:
                         conversation_key=row.key,
                         text=text,
                         incoming=private,
+                        kind=kind,
                         sender_name=row.name if private else "",
                         bounds=self._bounds(control),
                     )
                 )
             return messages
+
+    def visible_text_messages(self, row: ConversationRow) -> list[VisibleMessage]:
+        return [
+            message for message in self.visible_messages(row) if message.kind == "text"
+        ]
+
+    def capture_private_image(
+        self,
+        row: ConversationRow,
+        message_key: str,
+        bounds: tuple[int, int, int, int] | None,
+        target_dir: Path,
+    ) -> ImageCapture | None:
+        with self._thread_context():
+            self.focus_conversation(row)
+            if not self.validate_target(row.name, True):
+                return None
+            window = self._main_window()
+            message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
+            control = self._find_image_control(message_list, message_key, bounds)
+            actual_bounds = self._bounds(control) if control is not None else bounds
+            if control is None or not _valid_bounds(actual_bounds):
+                return None
+            target_dir.mkdir(parents=True, exist_ok=True)
+            identity = f"{row.key}\0{message_key}\0{actual_bounds}"
+            target = target_dir / (
+                hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16] + ".png"
+            )
+            viewer_result = self._capture_viewer(control, window, target)
+            if viewer_result:
+                if self.validate_target(row.name, True):
+                    return ImageCapture(target, degraded=False)
+                target.unlink(missing_ok=True)
+                return None
+            target.unlink(missing_ok=True)
+            if viewer_result is None:
+                return None
+            if not self.validate_target(row.name, True):
+                return None
+            if self._capture_bounds(actual_bounds, target):
+                return ImageCapture(target, degraded=True)
+            target.unlink(missing_ok=True)
+            return None
+
+    def _find_image_control(
+        self,
+        message_list: Any,
+        message_key: str,
+        bounds: tuple[int, int, int, int] | None,
+    ) -> Any | None:
+        candidates = [
+            control
+            for control in message_list.GetChildren()
+            if _control_message_kind(control) == "image"
+        ]
+        for control in candidates:
+            runtime_id = ":".join(
+                map(str, tuple(int(value) for value in (control.GetRuntimeId() or ())))
+            )
+            if runtime_id and runtime_id == message_key:
+                return control
+        if bounds is None:
+            return None
+        close = [
+            control
+            for control in candidates
+            if _bounds_close(self._bounds(control), bounds)
+        ]
+        return close[0] if len(close) == 1 else None
+
+    def _capture_viewer(
+        self, control: Any, main_window: Any, target: Path
+    ) -> bool | None:
+        try:
+            import win32gui  # type: ignore[import-untyped]
+            from PIL import ImageGrab
+
+            main_hwnd = int(main_window.NativeWindowHandle or 0)
+            visible_before = _visible_window_handles()
+            self._click_preserving_cursor(control)
+            time.sleep(0.6)
+            viewer_hwnd = self._opened_image_viewer(main_hwnd, visible_before)
+            if not viewer_hwnd:
+                self._activate_window(main_window)
+                return False
+            captured = False
+            closed = False
+            try:
+                raw_bounds = win32gui.GetWindowRect(viewer_hwnd)
+                viewer_bounds = (
+                    int(raw_bounds[0]),
+                    int(raw_bounds[1]),
+                    int(raw_bounds[2]),
+                    int(raw_bounds[3]),
+                )
+                image = ImageGrab.grab(bbox=viewer_bounds, all_screens=True)
+                if image.width >= 2 and image.height >= 2:
+                    image.save(target, format="PNG")
+                    captured = True
+            finally:
+                closed = self._close_image_viewer(viewer_hwnd)
+                self._activate_window(main_window)
+            if not closed:
+                target.unlink(missing_ok=True)
+                return None
+            return captured
+        except Exception:
+            try:
+                self._activate_window(main_window)
+            except Exception:
+                pass
+            target.unlink(missing_ok=True)
+            return None
+
+    def _opened_image_viewer(
+        self,
+        main_hwnd: int,
+        visible_before: set[int],
+    ) -> int:
+        try:
+            import win32gui  # type: ignore[import-untyped]
+            import win32process  # type: ignore[import-untyped]
+
+            if not main_hwnd or not win32gui.IsWindow(main_hwnd):
+                return 0
+            _, main_pid = win32process.GetWindowThreadProcessId(main_hwnd)
+            candidates: list[int] = []
+
+            def collect(hwnd: int, _: object) -> bool:
+                value = int(hwnd or 0)
+                if (
+                    not value
+                    or value in visible_before
+                    or not win32gui.IsWindowVisible(value)
+                ):
+                    return True
+                _, pid = win32process.GetWindowThreadProcessId(value)
+                title = str(win32gui.GetWindowText(value) or "").strip().casefold()
+                if int(pid) == int(main_pid) and title in {
+                    "图片和视频",
+                    "images and videos",
+                }:
+                    candidates.append(value)
+                return True
+
+            win32gui.EnumWindows(collect, None)
+            verified = [
+                hwnd
+                for hwnd in candidates
+                if self._viewer_close_control(hwnd) is not None
+            ]
+            return verified[0] if len(verified) == 1 else 0
+        except Exception:
+            return 0
+
+    def _viewer_close_control(self, viewer_hwnd: int) -> Any | None:
+        try:
+            root = self._auto.ControlFromHandle(viewer_hwnd)
+            controls = [root, *self._walk(root)]
+            return next(
+                (
+                    control
+                    for control in controls
+                    if str(getattr(control, "Name", "")).strip().casefold()
+                    in {"关闭", "close"}
+                    and str(getattr(control, "ClassName", "")) == "mmui::XButton"
+                ),
+                None,
+            )
+        except Exception:
+            return None
+
+    def _close_image_viewer(self, viewer_hwnd: int) -> bool:
+        control = self._viewer_close_control(viewer_hwnd)
+        if control is None:
+            return False
+        try:
+            import win32gui  # type: ignore[import-untyped]
+
+            self._click_preserving_cursor(control)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if not win32gui.IsWindowVisible(viewer_hwnd):
+                    return True
+                time.sleep(0.05)
+            return not win32gui.IsWindowVisible(viewer_hwnd)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _capture_bounds(
+        bounds: tuple[int, int, int, int] | None,
+        target: Path,
+    ) -> bool:
+        if not _valid_bounds(bounds):
+            return False
+        try:
+            from PIL import ImageGrab
+
+            image = ImageGrab.grab(bbox=bounds, all_screens=True)
+            if image.width < 2 or image.height < 2:
+                return False
+            image.save(target, format="PNG")
+            return True
+        except Exception:
+            return False
 
     def message_list_bounds(self) -> tuple[int, int, int, int] | None:
         with self._thread_context():
@@ -384,7 +595,7 @@ class WechatUiaClient:
 
     @staticmethod
     def _click_preserving_cursor(control: Any) -> None:
-        import win32api
+        import win32api  # type: ignore[import-untyped]
 
         cursor = win32api.GetCursorPos()
         try:
@@ -492,7 +703,7 @@ class WechatUiaClient:
             return self.validate_target(conversation_name)
 
     @contextmanager
-    def _thread_context(self) -> Iterable[None]:
+    def _thread_context(self) -> Iterator[None]:
         depth = getattr(self._thread_state, "depth", 0)
         initializer = None
         if depth == 0:
@@ -542,7 +753,7 @@ class WechatUiaClient:
     def _wechat_process_path(window: Any) -> str:
         try:
             import win32api
-            import win32con
+            import win32con  # type: ignore[import-untyped]
             import win32process
 
             handle = win32api.OpenProcess(
@@ -618,7 +829,52 @@ class WechatUiaClient:
         )
         if any(value is None for value in values):
             return None
-        return tuple(int(value) for value in values)  # type: ignore[return-value]
+        return tuple(int(value) for value in values)  # type: ignore[arg-type,return-value]
+
+
+def _valid_bounds(bounds: tuple[int, int, int, int] | None) -> bool:
+    return bool(
+        bounds
+        and bounds[2] > bounds[0]
+        and bounds[3] > bounds[1]
+    )
+
+
+def _control_message_kind(control: Any) -> str:
+    class_name = str(getattr(control, "ClassName", ""))
+    if class_name == "mmui::ChatTextItemView":
+        return "text"
+    if class_name == IMAGE_ITEM_CLASS:
+        return "image"
+    name = str(getattr(control, "Name", "") or "").strip().casefold()
+    if class_name == REFER_IMAGE_ITEM_CLASS and name in {"图片", "image"}:
+        return "image"
+    return ""
+
+
+def _bounds_close(
+    actual: tuple[int, int, int, int] | None,
+    expected: tuple[int, int, int, int],
+    tolerance: int = 8,
+) -> bool:
+    return bool(
+        actual
+        and all(abs(left - right) <= tolerance for left, right in zip(actual, expected))
+    )
+
+
+def _visible_window_handles() -> set[int]:
+    import win32gui  # type: ignore[import-untyped]
+
+    handles: set[int] = set()
+
+    def collect(hwnd: int, _: object) -> bool:
+        if win32gui.IsWindowVisible(hwnd):
+            handles.add(int(hwnd))
+        return True
+
+    win32gui.EnumWindows(collect, None)
+    return handles
 
 
 __all__ = [

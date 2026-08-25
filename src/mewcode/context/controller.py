@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from mewcode.conversation import Conversation
 from mewcode.hook import HookEvent
-from mewcode.llm import Message, Provider, ToolDefinition
+from mewcode.llm import Message, Provider, ToolDefinition, message_request_chars
 from mewcode.session.archive import ArchiveWriter, CompactCheckpoint
 from mewcode.session.repository import RestoredArchive
 
@@ -136,8 +137,8 @@ class ContextController:
                         f"工具结果已归档到 .mewcode/cache/{ref.relative_path}。预览：\n{ref.preview}",
                         result.is_error,
                     )
-                    messages[ref.message_index] = message.__class__(
-                        message.role, message.content, message.tool_calls, results
+                    messages[ref.message_index] = replace(
+                        message, tool_results=results
                     )
         if archive.latest_checkpoint is not None:
             self._summary = archive.latest_checkpoint.summary
@@ -208,7 +209,7 @@ class ContextController:
             + len(environment)
             + len(self.system_context())
             + sum(
-                len(message.content)
+                message_request_chars(message)
                 + sum(len(result.content) for result in message.tool_results)
                 for message in messages
             )
@@ -225,7 +226,26 @@ def _retained_start(messages: list[Message]) -> int:
     while index > 0 and (chars < 40_000 or len(messages) - index < 5):
         index -= 1
         message = messages[index]
-        chars += len(message.content) + sum(
+        chars += message_request_chars(message) + sum(
             len(result.content) for result in message.tool_results
         )
+    latest_image = next(
+        (
+            position
+            for position in range(len(messages) - 1, -1, -1)
+            if messages[position].role == "user"
+            and any(
+                not image.cleared and image.data
+                for image in messages[position].images
+            )
+        ),
+        None,
+    )
+    if latest_image is not None:
+        followups = sum(
+            message.role == "user" and not message.images
+            for message in messages[latest_image + 1 :]
+        )
+        if followups <= 3:
+            index = min(index, latest_image)
     return index

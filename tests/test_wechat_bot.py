@@ -5,9 +5,11 @@ import logging
 from functools import wraps
 from pathlib import Path
 
+from PIL import Image
+
 from mewcode.wechat.bot import WechatBot
 from mewcode.wechat.config import WechatConfig
-from mewcode.wechat.models import WechatDesktopEvent, WechatReply
+from mewcode.wechat.models import ImageCapture, WechatDesktopEvent, WechatReply
 from mewcode.wechat.runtime import WechatTurnCancelled
 from mewcode.wechat.store import WechatStateStore
 from mewcode.wechat.uia_client import WechatUiaError
@@ -26,6 +28,8 @@ class FakeDriver:
         self.sent: list[tuple[str, str]] = []
         self.fail_on = ""
         self.group_mentions: list[tuple[str, str, str]] = []
+        self.materialized: list[Path] = []
+        self.capture_failure = False
 
     def establish_baseline(self) -> None:
         pass
@@ -52,6 +56,16 @@ class FakeDriver:
         self.sent.append((event.conversation_name, f"@{sender_name}\n{text}"))
         return False, "test fallback"
 
+    def materialize_private_image(
+        self, event: WechatDesktopEvent, target_dir: Path
+    ) -> ImageCapture | None:
+        if self.capture_failure:
+            return None
+        path = target_dir / f"{event.event_id}.png"
+        Image.new("RGB", (4, 4), "red").save(path, format="PNG")
+        self.materialized.append(path)
+        return ImageCapture(path, degraded=event.event_id.startswith("degraded"))
+
 
 class FailingObserverDriver(FakeDriver):
     def wait_for_events(self, stop) -> list[WechatDesktopEvent]:
@@ -65,6 +79,7 @@ class FakeRuntime:
         self.calls: list[tuple[str, str]] = []
         self.deliveries: list[tuple[str, tuple[str, ...]]] = []
         self.group_calls: list[tuple[str, str, str, tuple]] = []
+        self.image_calls: list[tuple[str, str, tuple]] = []
 
     async def reply(
         self,
@@ -72,8 +87,12 @@ class FakeRuntime:
         text: str,
         cancel: asyncio.Event,
         on_tool_stage=None,
+        *,
+        images=(),
     ) -> WechatReply:
         self.calls.append((name, text))
+        if images:
+            self.image_calls.append((name, text, tuple(images)))
         await asyncio.sleep(0)
         return self.replies.get(text, WechatReply((f"reply:{text}",), False))
 
@@ -258,6 +277,23 @@ def group_event(
     )
 
 
+def image_event(event_id: str, name: str = "A") -> WechatDesktopEvent:
+    return WechatDesktopEvent(
+        event_id,
+        event_id,
+        f"row-{name}",
+        name,
+        name,
+        "[图片]",
+        1.0,
+        True,
+        True,
+        message_key=event_id,
+        message_kind="image",
+        bounds=(1, 2, 20, 30),
+    )
+
+
 async def start_consumer(bot: WechatBot) -> None:
     bot._consumer = asyncio.create_task(bot._consume())
 
@@ -294,6 +330,81 @@ async def test_allowlist_dedup_aggregation_and_fifo(tmp_path: Path) -> None:
     assert store.is_processed("1")
     assert store.is_processed("2")
     assert store.is_processed("3")
+    await bot.stop()
+
+
+@async_test
+async def test_private_image_only_triggers_one_multimodal_reply_and_cleans_tmp(
+    tmp_path: Path,
+) -> None:
+    store = WechatStateStore(tmp_path)
+    driver = FakeDriver()
+    runtime = FakeRuntime()
+    bot = WechatBot(config(), driver, runtime, store, quiet_seconds=0)
+    await start_consumer(bot)
+
+    bot.submit_event(image_event("img-1"))
+    await wait_idle(bot)
+
+    assert len(runtime.image_calls) == 1
+    assert "简短说明图片主体" in runtime.image_calls[0][1]
+    assert driver.sent == [("A", f"reply:{runtime.image_calls[0][1]}")]
+    assert driver.materialized and all(not path.exists() for path in driver.materialized)
+    await bot.stop()
+
+
+@async_test
+async def test_private_image_and_text_are_one_ordered_turn(tmp_path: Path) -> None:
+    store = WechatStateStore(tmp_path)
+    runtime = FakeRuntime()
+    bot = WechatBot(config(), FakeDriver(), runtime, store, quiet_seconds=0)
+    await start_consumer(bot)
+
+    bot.submit_event(image_event("img-1"))
+    bot.submit_event(image_event("img-2"))
+    bot.submit_event(event("text-1", "A", "比较这两张图"))
+    await wait_idle(bot)
+
+    assert runtime.calls == [("A", "比较这两张图")]
+    assert len(runtime.image_calls[0][2]) == 2
+    assert runtime.image_calls[0][1] == "比较这两张图"
+    await bot.stop()
+
+
+@async_test
+async def test_five_images_reject_whole_batch_without_model_call(tmp_path: Path) -> None:
+    store = WechatStateStore(tmp_path)
+    driver = FakeDriver()
+    runtime = FakeRuntime()
+    bot = WechatBot(config(), driver, runtime, store, quiet_seconds=0)
+    await start_consumer(bot)
+    for index in range(5):
+        bot.submit_event(image_event(f"img-{index}"))
+
+    await wait_idle(bot)
+
+    assert runtime.calls == []
+    assert driver.materialized == []
+    assert driver.sent == [("A", "图片过多或过大，请压缩或分批发送。")]
+    await bot.stop()
+
+
+@async_test
+async def test_image_capture_failure_is_not_retried_or_sent_to_model(
+    tmp_path: Path,
+) -> None:
+    store = WechatStateStore(tmp_path)
+    driver = FakeDriver()
+    driver.capture_failure = True
+    runtime = FakeRuntime()
+    bot = WechatBot(config(), driver, runtime, store, quiet_seconds=0)
+    await start_consumer(bot)
+
+    bot.submit_event(image_event("img-1"))
+    await wait_idle(bot)
+
+    assert runtime.calls == []
+    assert driver.sent == [("A", "图片暂时没读出来，请重新发送或换一张。")]
     await bot.stop()
 
 

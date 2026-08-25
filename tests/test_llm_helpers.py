@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from mewcode.llm import (
+    ImageContent,
     Message,
     Request,
     System,
@@ -11,6 +12,7 @@ from mewcode.llm import (
     ToolDefinition,
     ToolResult,
     Usage,
+    message_request_chars,
     redact_secret,
 )
 from mewcode.llm.anthropic_provider import (
@@ -44,6 +46,96 @@ def _definition() -> ToolDefinition:
             "required": ["path"],
         },
     )
+
+
+def _image(**changes: object) -> ImageContent:
+    values: dict[str, object] = {
+        "media_type": "image/png",
+        "data": "aGVsbG8=",
+        "sha256": "abc",
+        "width": 16,
+        "height": 16,
+        "size_bytes": 5,
+    }
+    values.update(changes)
+    return ImageContent(**values)  # type: ignore[arg-type]
+
+
+def test_image_message_defaults_and_request_estimate_ignore_base64_length() -> None:
+    image = _image(data="x" * 100_000)
+    message = Message(role="user", content="看图", images=[image])
+
+    assert image.detail == "original"
+    assert image.cleared is False
+    assert message_request_chars(message) == len("看图") + 1536
+    assert message_request_chars(
+        Message(role="user", images=[_image(data="", cleared=True)])
+    ) == 0
+
+
+def test_openai_messages_serialize_base64_images_in_order() -> None:
+    request = Request(
+        messages=[
+            Message(
+                role="user",
+                content="比较",
+                images=[_image(data="Zmlyc3Q="), _image(data="c2Vjb25k")],
+            )
+        ]
+    )
+
+    converted = to_openai_messages(request)
+
+    assert converted == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "比较"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,Zmlyc3Q=",
+                        "detail": "original",
+                    },
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,c2Vjb25k",
+                        "detail": "original",
+                    },
+                },
+            ],
+        }
+    ]
+
+
+def test_provider_image_boundaries_fail_explicitly() -> None:
+    cleared = Message(role="user", images=[_image(data="", cleared=True)])
+    assert to_openai_messages(Request(messages=[cleared])) == [
+        {"role": "user", "content": "[图片数据已清理]"}
+    ]
+
+    invalid_messages = [
+        Message(role="assistant", images=[_image()]),
+        Message(role="user", images=[_image(media_type="image/bmp")]),
+        Message(role="user", images=[_image(data="")]),
+        Message(role="user", images=[_image(detail="low")]),
+    ]
+    for message in invalid_messages:
+        try:
+            to_openai_messages(Request(messages=[message]))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("非法图片消息必须明确失败")
+
+    try:
+        to_anthropic_messages([Message(role="user", images=[_image()])])
+    except ValueError as exc:
+        assert "图片" in str(exc)
+    else:
+        raise AssertionError("Anthropic 不得静默丢弃图片")
 
 
 def test_text_delta_extractors_and_redaction() -> None:
@@ -236,6 +328,9 @@ def test_openai_provider_serializes_request_and_streams_usage() -> None:
         {"role": "system", "content": "隐式上下文"},
     ]
     assert captured["tools"] == to_openai_tools([_definition()])
+    assert captured["tool_choice"] == "auto"
+    assert captured["stream"] is True
+    assert captured["stream_options"] == {"include_usage": True}
     assert Usage(12, 7, cache_read=9) in [event.usage for event in events]
     assert events[-1].done
 

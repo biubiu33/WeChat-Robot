@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from .llm import (
+    ImageContent,
     ROLE_ASSISTANT,
     ROLE_TOOL,
     ROLE_USER,
@@ -21,8 +22,12 @@ class Conversation:
         self._messages = list(messages)
         self._on_append = on_append
 
-    def add_user(self, text: str) -> None:
-        self._append(Message(role=ROLE_USER, content=text))
+    def add_user(
+        self,
+        text: str,
+        images: Sequence[ImageContent] = (),
+    ) -> None:
+        self._append(Message(role=ROLE_USER, content=text, images=list(images)))
 
     def add_assistant(self, text: str) -> None:
         self._append(Message(role=ROLE_ASSISTANT, content=text))

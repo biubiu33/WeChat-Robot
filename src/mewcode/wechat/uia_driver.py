@@ -9,9 +9,10 @@ from collections import Counter
 from collections.abc import Collection
 from dataclasses import replace
 from difflib import SequenceMatcher
+from pathlib import Path
 
 from .group_sender_ocr import GroupSenderOcr
-from .models import ConversationRow, VisibleMessage, WechatDesktopEvent
+from .models import ImageCapture, ConversationRow, VisibleMessage, WechatDesktopEvent
 from .shell_hook import WindowsShellHook
 from .uia_client import WechatUiaClient
 
@@ -126,6 +127,33 @@ class WechatUiaDriver:
             )
             self._client.send_text(row, text)
 
+    def materialize_private_image(
+        self,
+        event: WechatDesktopEvent,
+        target_dir: Path,
+    ) -> ImageCapture | None:
+        if (
+            not event.private
+            or event.message_kind != "image"
+            or (
+                self._allowed_contacts is not None
+                and event.conversation_name not in self._allowed_contacts
+            )
+        ):
+            return None
+        with self._lock:
+            row = ConversationRow(
+                key=event.conversation_key,
+                name=event.conversation_name,
+                private=True,
+            )
+            return self._client.capture_private_image(
+                row,
+                event.message_key,
+                event.bounds,
+                target_dir,
+            )
+
     def send_group_first(
         self,
         event: WechatDesktopEvent,
@@ -173,9 +201,22 @@ class WechatUiaDriver:
             actual_private = self._client.current_conversation_is_private()
             if actual_private is not expected_private:
                 continue
-            messages = self._client.visible_text_messages(row)
             if actual_private:
-                candidates = messages[-min(row.unread_count, len(messages)) :]
+                reader = getattr(self._client, "visible_messages", None)
+                messages = (
+                    list(reader(row))
+                    if callable(reader)
+                    else self._client.visible_text_messages(row)
+                )
+            else:
+                messages = self._client.visible_text_messages(row)
+            if actual_private:
+                unread_delta = (
+                    max(0, row.unread_count - previous_unread)
+                    if self._baseline_ready
+                    else row.unread_count
+                )
+                candidates = messages[-min(unread_delta, len(messages)) :]
                 for index, message in enumerate(candidates):
                     events.append(
                         self._event(row, message, candidates, index, private=True)
@@ -287,6 +328,9 @@ class WechatUiaDriver:
             private=private,
             is_at=is_at,
             raw_text=message.text,
+            message_key=message.key,
+            message_kind=message.kind,
+            bounds=message.bounds,
         )
 
 

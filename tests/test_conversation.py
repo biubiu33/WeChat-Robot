@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mewcode.conversation import Conversation
-from mewcode.llm import Message, ToolCall, ToolResult
+from mewcode.llm import ImageContent, Message, ToolCall, ToolResult
 
 
 def test_conversation_keeps_order_and_returns_copy() -> None:
@@ -86,3 +86,19 @@ def test_conversation_calls_append_sink_once_and_isolates_sink_errors() -> None:
     broken = Conversation(on_append=lambda message: (_ for _ in ()).throw(OSError()))
     broken.add_user("归档失败也继续")
     assert broken.messages()[0].content == "归档失败也继续"
+
+
+def test_conversation_adds_images_to_one_user_message() -> None:
+    images = [ImageContent(media_type="image/png", data="aGVsbG8=")]
+    conv = Conversation()
+
+    conv.add_user("识别", images=images)
+    images.clear()
+
+    assert conv.messages() == [
+        Message(
+            role="user",
+            content="识别",
+            images=[ImageContent(media_type="image/png", data="aGVsbG8=")],
+        )
+    ]

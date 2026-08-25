@@ -7,9 +7,9 @@ from typing import Any, Literal, Protocol
 from mewcode.config import ProviderConfig
 
 
-ROLE_USER = "user"
-ROLE_ASSISTANT = "assistant"
-ROLE_TOOL = "tool"
+ROLE_USER: Literal["user"] = "user"
+ROLE_ASSISTANT: Literal["assistant"] = "assistant"
+ROLE_TOOL: Literal["tool"] = "tool"
 
 
 @dataclass(frozen=True)
@@ -44,11 +44,26 @@ class ToolDefinition:
 
 
 @dataclass(frozen=True)
+class ImageContent:
+    media_type: Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
+    data: str
+    detail: Literal["original"] = "original"
+    sha256: str = ""
+    width: int = 0
+    height: int = 0
+    size_bytes: int = 0
+    created_at: int = 0
+    degraded: bool = False
+    cleared: bool = False
+
+
+@dataclass(frozen=True)
 class Message:
     role: Literal["user", "assistant", "tool"]
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[ToolResult] = field(default_factory=list)
+    images: list[ImageContent] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -109,7 +124,14 @@ def redact_secret(text: str, secret: str) -> str:
     return text.replace(secret, "***")
 
 
+def message_request_chars(message: Message) -> int:
+    """Return a conservative text-equivalent request size without counting Base64."""
+    active_images = sum(not image.cleared and bool(image.data) for image in message.images)
+    return len(message.content) + active_images * 384 * 4
+
+
 __all__ = [
+    "ImageContent",
     "Message",
     "Provider",
     "Request",
@@ -124,4 +146,5 @@ __all__ = [
     "Usage",
     "new_provider",
     "redact_secret",
+    "message_request_chars",
 ]

@@ -7,8 +7,11 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from .config import WechatConfig
+from .image import MAX_IMAGES_PER_BATCH, WechatImageError, encode_capture, validate_batch
 from .models import (
     GroupHistoryItem,
     PendingBatch,
@@ -16,9 +19,21 @@ from .models import (
     WechatDesktopEvent,
     WechatReply,
 )
-from .runtime import WechatAgentRuntime, WechatTurnCancelled, _chat_delay
+from .runtime import (
+    WechatAgentRuntime,
+    WechatImageArchiveError,
+    WechatTurnCancelled,
+    _chat_delay,
+)
 from .store import WechatStateStore
 from .uia_driver import WechatUiaDriver
+
+
+DEFAULT_IMAGE_PROMPT = "请简短说明图片主体、场景和清晰可见的关键文字；不确定的内容请明确说明。"
+IMAGE_LIMIT_MESSAGE = "图片过多或过大，请压缩或分批发送。"
+IMAGE_FAILURE_MESSAGE = "图片暂时没读出来，请重新发送或换一张。"
+IMAGE_ARCHIVE_MESSAGE = "图片保存空间不足，请清理会话后重试。"
+DEGRADED_NOTE = "本批次包含聊天气泡截图，回答中必须说明可能不是完整原图。"
 
 
 @dataclass
@@ -75,6 +90,11 @@ class WechatBot:
             daemon=True,
         )
         self._observer.start()
+        if self._allowed:
+            self._logger.warning(
+                "隐私提示：白名单好友图片会发送给 DeepSeek，并以明文 Base64 "
+                "保存在本地好友 Session 中，直到配额清理或 Session 删除"
+            )
         self._logger.info("微信机器人已进入监听状态")
         try:
             await self._stopped.wait()
@@ -254,12 +274,22 @@ class WechatBot:
 
             try:
                 if queued.private:
-                    reply = await self._runtime.reply(
-                        queued.conversation_name,
-                        queued.text,
-                        active.cancel,
-                        on_tool_stage,
-                    )
+                    if queued.image_events:
+                        reply = await self._reply_with_images(
+                            queued,
+                            event,
+                            active,
+                            on_tool_stage,
+                        )
+                        if reply is None:
+                            continue
+                    else:
+                        reply = await self._runtime.reply(
+                            queued.conversation_name,
+                            queued.text,
+                            active.cancel,
+                            on_tool_stage,
+                        )
                 else:
                     reply_group = getattr(self._runtime, "reply_group", None)
                     if callable(reply_group):
@@ -284,11 +314,24 @@ class WechatBot:
                 pass
             except TimeoutError:
                 if not active.cancel.is_set():
-                    await self._try_send_error(event, "处理超时，请稍后再试。", active)
+                    message = (
+                        IMAGE_FAILURE_MESSAGE
+                        if queued.image_events
+                        else "处理超时，请稍后再试。"
+                    )
+                    await self._try_send_error(event, message, active)
+            except WechatImageArchiveError:
+                if not active.cancel.is_set():
+                    await self._try_send_error(event, IMAGE_ARCHIVE_MESSAGE, active)
             except Exception as exc:  # noqa: BLE001 - preserve the queue consumer
                 self._logger.error("微信消息处理失败: %s", type(exc).__name__)
                 if not active.cancel.is_set():
-                    await self._try_send_error(event, "处理失败，请稍后再试。", active)
+                    message = (
+                        IMAGE_FAILURE_MESSAGE
+                        if queued.image_events
+                        else "处理失败，请稍后再试。"
+                    )
+                    await self._try_send_error(event, message, active)
             finally:
                 try:
                     if queued.private:
@@ -302,6 +345,57 @@ class WechatBot:
                 for item in queued.events:
                     self._store.mark_processed(item.event_id)
                 self._queue.task_done()
+
+    async def _reply_with_images(
+        self,
+        queued: QueuedBatch,
+        event: WechatDesktopEvent,
+        active: ActiveTurn,
+        on_tool_stage,
+    ) -> WechatReply | None:
+        if len(queued.image_events) > MAX_IMAGES_PER_BATCH:
+            await self._try_send_error(event, IMAGE_LIMIT_MESSAGE, active)
+            return None
+        with TemporaryDirectory(prefix="mewcode-wechat-image-") as temp_name:
+            target_dir = Path(temp_name)
+            images = []
+            try:
+                for image_event in queued.image_events:
+                    if active.cancel.is_set():
+                        raise WechatTurnCancelled
+                    capture = await asyncio.to_thread(
+                        self._driver.materialize_private_image,
+                        image_event,
+                        target_dir,
+                    )
+                    if capture is None:
+                        await self._try_send_error(
+                            event, IMAGE_FAILURE_MESSAGE, active
+                        )
+                        return None
+                    if active.cancel.is_set():
+                        raise WechatTurnCancelled
+                    images.append(
+                        await asyncio.to_thread(
+                            encode_capture,
+                            capture,
+                            int(image_event.observed_at),
+                        )
+                    )
+                validate_batch(images)
+            except WechatImageError:
+                await self._try_send_error(event, IMAGE_LIMIT_MESSAGE, active)
+                return None
+            prompt = queued.text.strip() or DEFAULT_IMAGE_PROMPT
+            if any(image.degraded for image in images):
+                prompt = f"{prompt}\n\n{DEGRADED_NOTE}"
+            return await self._runtime.reply(
+                queued.conversation_name,
+                prompt,
+                active.cancel,
+                on_tool_stage,
+                images=images,
+            )
 
     async def _try_send_error(
         self,

@@ -6,18 +6,18 @@ providers:
     base_url: https://api.anthropic.com
     thinking: true
 
-  # 取消注释后可添加 OpenAI 或兼容端点配置。
+  # DeepSeek 视觉模型同时供 TUI 文字交互和微信私聊图片识别使用。
   # - name: openai
   #   protocol: openai
-  #   api_key: sk-your-openai-key
-  #   model: gpt-4o-mini
-  #   base_url: https://api.openai.com/v1
+  #   api_key: sk-your-deepseek-key
+  #   model: deepseek-v4-flash-vision-exp
+  #   base_url: https://api.deepseek.com
   #   thinking: false
 
 # Windows 微信 4.0.5.15 本地机器人；联系人和 provider 请按实际情况修改。
 # wechat:
 #   enabled: true
-#   provider: claude
+#   provider: openai
 #   allowed_contacts:
 #     - 专用测试好友
 #   allowed_groups:

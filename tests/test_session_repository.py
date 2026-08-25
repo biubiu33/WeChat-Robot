@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import mewcode.session.archive as archive
-from mewcode.llm import Message, ToolCall
+from mewcode.llm import ImageContent, Message, ToolCall
 from mewcode.session.archive import ArchiveEvent, ArchiveWriter, CompactCheckpoint
 from mewcode.session.paths import paths_for
 from mewcode.session.repository import SessionRepository
@@ -129,3 +129,53 @@ def test_delete_rejects_legacy_or_missing_session(tmp_path: Path) -> None:
 
     assert repository.delete("1717000000-abc12345") is False
     assert repository.delete("20260717-120000-a1b2") is False
+
+
+def test_reserve_image_bytes_clears_oldest_data_and_keeps_metadata(
+    tmp_path: Path,
+) -> None:
+    session_id = "20260717-120000-a1b2"
+    path = paths_for(tmp_path, session_id).archive_path
+    writer = ArchiveWriter(path)
+    for index in range(2):
+        writer.append_message(
+            Message(
+                role="user",
+                content=f"图 {index}",
+                images=[
+                    ImageContent(
+                        media_type="image/png",
+                        data="eA==",
+                        sha256=f"hash-{index}",
+                        width=10,
+                        height=20,
+                        size_bytes=4,
+                        created_at=index,
+                    )
+                ],
+            )
+        )
+    writer.close()
+
+    repository = SessionRepository(tmp_path)
+    assert repository.reserve_image_bytes(session_id, 4, limit_bytes=8)
+
+    restored = repository.restore(session_id).messages
+    assert restored[0].images[0].cleared is True
+    assert restored[0].images[0].data == ""
+    assert restored[0].images[0].sha256 == "hash-0"
+    assert restored[0].images[0].width == 10
+    assert restored[1].images[0].data == "eA=="
+
+
+def test_reserve_image_bytes_rejects_unfit_batch_without_rewriting(
+    tmp_path: Path,
+) -> None:
+    session_id = "20260717-120000-a1b2"
+    path = write_archive(tmp_path, session_id)
+    before = path.read_bytes()
+
+    assert not SessionRepository(tmp_path).reserve_image_bytes(
+        session_id, 9, limit_bytes=8
+    )
+    assert path.read_bytes() == before

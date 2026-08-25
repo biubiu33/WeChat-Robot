@@ -21,7 +21,9 @@ SECTIONS = (
 
 
 async def summarize(provider: Provider, messages: list[Message]) -> str:
-    history = "\n".join(f"[{message.role}] {message.content}" for message in messages)
+    history = "\n".join(
+        f"[{message.role}] {_summary_content(message)}" for message in messages
+    )
     headings = "\n".join(f"## {section}" for section in SECTIONS)
     prompt = (
         "请总结以下早期会话。正式输出必须包含下列九个 Markdown 标题；"
@@ -34,3 +36,11 @@ async def summarize(provider: Provider, messages: list[Message]) -> str:
     if missing:
         raise ValueError(f"摘要缺少固定段落: {', '.join(missing)}")
     return result
+
+
+def _summary_content(message: Message) -> str:
+    if message.content:
+        return message.content
+    if message.images:
+        return "[好友发送了图片]"
+    return ""

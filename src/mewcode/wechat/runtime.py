@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from functools import cache
 from importlib.resources import files
@@ -13,7 +14,7 @@ from tzlocal import get_localzone_name
 
 from mewcode.agent import NOTICE_CANCELLED, Agent, Completion, Phase
 from mewcode.config import ConfigError, ProviderConfig
-from mewcode.llm import Message, Provider, ToolCall, ToolResult, new_provider
+from mewcode.llm import ImageContent, Message, Provider, ToolCall, ToolResult, new_provider
 from mewcode.permission import Mode
 from mewcode.session.archive import ArchiveWriter
 from mewcode.session.repository import SessionRepository
@@ -22,6 +23,7 @@ from mewcode.tool import Registry
 
 from .config import WechatConfig
 from .info.registry import WECHAT_INFO_POLICY, WechatInfoServices, WechatInfoTurn
+from .image import FOLLOWUP_IMAGE_TURNS, MAX_ARCHIVE_IMAGE_BYTES
 from .models import GroupHistoryItem, WechatReply
 from .store import WechatStateStore
 
@@ -57,6 +59,10 @@ class WechatAgentError(RuntimeError):
     pass
 
 
+class WechatImageArchiveError(WechatAgentError):
+    pass
+
+
 class WechatAgentRuntime:
     def __init__(
         self,
@@ -85,6 +91,8 @@ class WechatAgentRuntime:
         text: str,
         cancel: asyncio.Event,
         on_tool_stage: Callable[[str], Awaitable[None]] | None = None,
+        *,
+        images: Sequence[ImageContent] = (),
     ) -> WechatReply:
         return await self._reply(
             conversation_name,
@@ -93,6 +101,7 @@ class WechatAgentRuntime:
             on_tool_stage,
             tool_text=text,
             group=False,
+            images=images,
         )
 
     async def reply_group(
@@ -112,6 +121,7 @@ class WechatAgentRuntime:
             on_tool_stage,
             tool_text=text,
             group=True,
+            images=(),
         )
 
     async def _reply(
@@ -123,12 +133,24 @@ class WechatAgentRuntime:
         *,
         tool_text: str,
         group: bool,
+        images: Sequence[ImageContent],
     ) -> WechatReply:
         turn = (
             self._info_services.new_turn(conversation_name, tool_text)
             if self._info_services is not None
             else None
         )
+        if images and not group:
+            session_id = self._store.get_session_id(conversation_name)
+            if session_id is not None:
+                reserved = await asyncio.to_thread(
+                    self._repository.reserve_image_bytes,
+                    session_id,
+                    sum(image.size_bytes for image in images),
+                    MAX_ARCHIVE_IMAGE_BYTES,
+                )
+                if not reserved:
+                    raise WechatImageArchiveError("图片档案空间不足，请清理会话后重试")
         runtime = (
             self._open_ephemeral_session(turn)
             if group
@@ -165,6 +187,7 @@ class WechatAgentRuntime:
                     prompt,
                     cancel,
                     on_tool_stage,
+                    images=images,
                 ),
                 timeout=self._config.task_timeout_seconds,
             )
@@ -226,8 +249,15 @@ class WechatAgentRuntime:
         text: str,
         cancel: asyncio.Event,
         on_tool_stage: Callable[[str], Awaitable[None]] | None,
+        *,
+        images: Sequence[ImageContent] = (),
     ) -> tuple[Completion, bool]:
-        runtime.conversation.add_user(text)
+        runtime.conversation.add_user(text, images=images)
+        if images and not runtime.writer.last_append_ok:
+            raise WechatImageArchiveError("图片会话写入失败")
+        runtime.conversation.replace_messages(
+            _wechat_active_image_messages(runtime.conversation.messages())
+        )
         error: Exception | None = None
         cancelled = False
         used_web = False
@@ -408,6 +438,39 @@ def _wechat_history_messages(messages: list[Message]) -> list[Message]:
     ]
 
 
+def _wechat_active_image_messages(messages: list[Message]) -> list[Message]:
+    latest = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if messages[index].role == "user"
+            and any(not image.cleared and image.data for image in messages[index].images)
+        ),
+        None,
+    )
+    followups = (
+        sum(
+            message.role == "user" and not message.images
+            for message in messages[latest + 1 :]
+        )
+        if latest is not None
+        else FOLLOWUP_IMAGE_TURNS + 1
+    )
+    active = latest if followups <= FOLLOWUP_IMAGE_TURNS else None
+    filtered: list[Message] = []
+    for index, message in enumerate(messages):
+        if not message.images or index == active:
+            filtered.append(message)
+            continue
+        filtered.append(
+            replace(
+                message,
+                images=[replace(image, data="", cleared=True) for image in message.images],
+            )
+        )
+    return filtered
+
+
 def _to_wechat_plain_text(text: str) -> str:
     lines: list[str] = []
     in_fence = False
@@ -497,6 +560,7 @@ __all__ = [
     "BUBBLE_DELIMITER",
     "WechatAgentError",
     "WechatAgentRuntime",
+    "WechatImageArchiveError",
     "WechatTurnCancelled",
     "_build_wechat_reply",
     "_chat_delay",
@@ -507,4 +571,5 @@ __all__ = [
     "_wechat_archive_message",
     "_wechat_environment",
     "_wechat_history_messages",
+    "_wechat_active_image_messages",
 ]

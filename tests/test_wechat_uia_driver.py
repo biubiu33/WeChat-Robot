@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import threading
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
 
-from mewcode.wechat.models import ConversationRow, VisibleMessage
+from mewcode.wechat.models import ConversationRow, QueuedBatch, VisibleMessage
 from mewcode.wechat.uia_client import (
     INPUT_CLASS,
     INPUT_ID,
@@ -81,6 +82,26 @@ def test_baseline_ignores_history_and_emits_changed_unread_text() -> None:
     assert events[0].incoming and events[0].private
 
 
+def test_private_scan_only_emits_unread_delta_after_startup_baseline() -> None:
+    client = FakeClient()
+    client.rows = [
+        ConversationRow("row-a", "好友A", signature="old", unread_count=1)
+    ]
+    driver = WechatUiaDriver(client, FakeHook(), reconcile_seconds=0.2)
+    driver.establish_baseline()
+    client.rows = [
+        ConversationRow("row-a", "好友A", signature="new", unread_count=2)
+    ]
+    client.messages["好友A"] = [
+        message("startup", "启动前旧图片"),
+        message("new", "启动后新消息"),
+    ]
+
+    events = driver.wait_for_events(threading.Event())
+
+    assert [item.text for item in events] == ["启动后新消息"]
+
+
 def test_group_or_duplicate_name_is_safely_ignored() -> None:
     client = FakeClient()
     driver = WechatUiaDriver(client, FakeHook())
@@ -124,6 +145,30 @@ def test_same_text_with_different_message_identity_is_not_deduplicated() -> None
     )
 
     assert first.fingerprint != second.fingerprint
+
+
+def test_image_event_keeps_identity_and_batch_text_excludes_placeholder() -> None:
+    row = ConversationRow("row-a", "好友A")
+    visible = VisibleMessage(
+        "image-1",
+        "row-a",
+        "[图片]",
+        True,
+        kind="image",
+        sender_name="好友A",
+        bounds=(1, 2, 30, 40),
+    )
+    event = WechatUiaDriver._event(row, visible, [visible], 0)
+    text_event = WechatUiaDriver._event(
+        row, message("text", "比较"), [message("text", "比较")], 0
+    )
+    batch = QueuedBatch("好友A", (event, text_event), 1, 0)
+
+    assert event.message_key == "image-1"
+    assert event.message_kind == "image"
+    assert event.bounds == (1, 2, 30, 40)
+    assert batch.text == "比较"
+    assert batch.image_events == (event,)
 
 
 def test_target_validation_and_send_are_delegated_under_original_name() -> None:
@@ -231,6 +276,153 @@ def test_405_session_row_parses_exact_name_and_unread_count() -> None:
     assert len(conversations) == 1
     assert conversations[0].name == "biubiubiu仿生人"
     assert conversations[0].unread_count == 1
+
+
+def test_visible_messages_includes_plain_image_but_text_wrapper_filters_it() -> None:
+    text = SimpleNamespace(
+        ClassName="mmui::ChatTextItemView",
+        Name="你好",
+        GetRuntimeId=lambda: [1],
+    )
+    image = SimpleNamespace(
+        ClassName="mmui::ChatBubbleReferItemView",
+        Name="图片",
+        GetRuntimeId=lambda: [2],
+    )
+    quoted_image = SimpleNamespace(
+        ClassName="mmui::ChatBubbleReferItemView",
+        Name="请看这张图 引用 张三 的消息：图片",
+        GetRuntimeId=lambda: [4],
+    )
+    file_item = SimpleNamespace(
+        ClassName="mmui::ChatFileItemView",
+        Name="x.zip",
+        GetRuntimeId=lambda: [3],
+    )
+    message_list = SimpleNamespace(
+        GetChildren=lambda: [text, image, quoted_image, file_item]
+    )
+    client = object.__new__(WechatUiaClient)
+    client._thread_context = nullcontext
+    client.current_conversation_name = lambda: "好友A"
+    client.current_conversation_is_private = lambda: True
+    client._main_window = object
+    client._find_unique = lambda *_, **__: message_list
+    client._bounds = lambda control: (0, 0, int(control.GetRuntimeId()[0]), 10)
+    row = ConversationRow("row-a", "好友A", private=True)
+
+    visible = client.visible_messages(row)
+
+    assert [(item.key, item.kind, item.text) for item in visible] == [
+        ("1", "text", "你好"),
+        ("2", "image", "[图片]"),
+    ]
+    assert [item.kind for item in client.visible_text_messages(row)] == ["text"]
+
+
+def test_capture_private_image_falls_back_to_bubble(tmp_path: Path) -> None:
+    control = SimpleNamespace(
+        ClassName="mmui::ChatBubbleReferItemView",
+        Name="图片",
+        GetRuntimeId=lambda: [2],
+    )
+    message_list = SimpleNamespace(GetChildren=lambda: [control])
+    client = object.__new__(WechatUiaClient)
+    client._thread_context = nullcontext
+    client.focus_conversation = lambda row: None
+    client.validate_target = lambda name, private=True: name == "好友A" and private
+    client._main_window = object
+    client._find_unique = lambda *_, **__: message_list
+    client._bounds = lambda _: (1, 2, 20, 30)
+    client._capture_viewer = lambda *_: False
+
+    def capture_bounds(bounds, target):
+        assert bounds == (1, 2, 20, 30)
+        target.write_bytes(b"png")
+        return True
+
+    client._capture_bounds = capture_bounds
+
+    result = client.capture_private_image(
+        ConversationRow("row-a", "好友A", private=True),
+        "2",
+        (1, 2, 20, 30),
+        tmp_path,
+    )
+
+    assert result is not None
+    assert result.degraded is True
+    assert result.path.read_bytes() == b"png"
+
+
+def test_viewer_capture_closes_verified_window_and_restores_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from PIL import ImageGrab
+
+    client = object.__new__(WechatUiaClient)
+    client._click_preserving_cursor = lambda control: None
+    client._opened_image_viewer = lambda main, before: 99
+    client._close_image_viewer = lambda hwnd: hwnd == 99
+    activated: list[object] = []
+    client._activate_window = lambda window: activated.append(window)
+    monkeypatch.setattr("mewcode.wechat.uia_client._visible_window_handles", lambda: {42})
+    monkeypatch.setitem(
+        sys.modules,
+        "win32gui",
+        SimpleNamespace(GetWindowRect=lambda hwnd: (0, 0, 20, 10)),
+    )
+    monkeypatch.setattr(
+        ImageGrab,
+        "grab",
+        lambda **kwargs: __import__("PIL.Image", fromlist=["Image"]).new(
+            "RGB", (20, 10), "red"
+        ),
+    )
+    main = SimpleNamespace(NativeWindowHandle=42)
+    target = tmp_path / "viewer.png"
+
+    assert client._capture_viewer(object(), main, target) is True
+    assert target.is_file()
+    assert activated == [main]
+
+
+def test_viewer_close_failure_is_unsafe_and_does_not_keep_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from PIL import ImageGrab
+
+    client = object.__new__(WechatUiaClient)
+    client._click_preserving_cursor = lambda control: None
+    client._opened_image_viewer = lambda main, before: 99
+    client._close_image_viewer = lambda hwnd: False
+    client._activate_window = lambda window: None
+    monkeypatch.setattr("mewcode.wechat.uia_client._visible_window_handles", lambda: set())
+    monkeypatch.setitem(
+        sys.modules,
+        "win32gui",
+        SimpleNamespace(GetWindowRect=lambda hwnd: (0, 0, 20, 10)),
+    )
+    monkeypatch.setattr(
+        ImageGrab,
+        "grab",
+        lambda **kwargs: __import__("PIL.Image", fromlist=["Image"]).new(
+            "RGB", (20, 10), "red"
+        ),
+    )
+    target = tmp_path / "unsafe.png"
+
+    assert (
+        client._capture_viewer(
+            object(), SimpleNamespace(NativeWindowHandle=42), target
+        )
+        is None
+    )
+    assert not target.exists()
 
 
 def test_session_row_parses_group_mention_marker() -> None:

@@ -9,9 +9,9 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TextIO
 
-from mewcode.llm import Message, ToolCall, ToolResult
+from mewcode.llm import ImageContent, Message, ToolCall, ToolResult
 
 
 EventType = Literal[
@@ -97,6 +97,22 @@ def message_to_data(message: Message, *, model: str = "") -> dict[str, object]:
             for result in message.tool_results
         ],
     }
+    if message.images:
+        data["images"] = [
+            {
+                "media_type": image.media_type,
+                "data": image.data,
+                "detail": image.detail,
+                "sha256": image.sha256,
+                "width": image.width,
+                "height": image.height,
+                "size_bytes": image.size_bytes,
+                "created_at": image.created_at,
+                "degraded": image.degraded,
+                "cleared": image.cleared,
+            }
+            for image in message.images
+        ]
     if model:
         data["model"] = model
     return data
@@ -111,9 +127,16 @@ def message_from_data(data: dict[str, object]) -> Message | None:
         return None
     calls = _tool_calls(data.get("tool_calls"))
     results = _tool_results(data.get("tool_results"))
-    if calls is None or results is None:
+    images = _images(data.get("images"))
+    if calls is None or results is None or images is None:
         return None
-    return Message(role=role, content=content, tool_calls=calls, tool_results=results)
+    return Message(
+        role=role,
+        content=content,
+        tool_calls=calls,
+        tool_results=results,
+        images=images,
+    )
 
 
 def read_events(path: Path) -> list[ArchiveEvent]:
@@ -140,6 +163,8 @@ class ArchiveWriter:
         self._path = path
         self._lock = threading.Lock()
         self._closed = False
+        self.last_append_ok = False
+        self._handle: TextIO | None
         self._first_user_written = any(
             event.type == "message"
             and event.data.get("role") == "user"
@@ -153,16 +178,18 @@ class ArchiveWriter:
             self._handle = None
             self._warn(f"无法写入会话档案: {path}")
 
-    def append_message(self, message: Message, *, model: str = "") -> None:
+    def append_message(self, message: Message, *, model: str = "") -> bool:
         record_model = ""
         if message.role == "user" and model and not self._first_user_written:
             record_model = model
-            self._first_user_written = True
-        self.append(
+        written = self.append(
             ArchiveEvent(
                 "message", _now(), message_to_data(message, model=record_model)
             )
         )
+        if written and record_model:
+            self._first_user_written = True
+        return written
 
     def append_title(self, title: str) -> None:
         self.append(ArchiveEvent("title", _now(), {"title": title}))
@@ -222,19 +249,24 @@ class ArchiveWriter:
             )
         )
 
-    def append(self, event: ArchiveEvent) -> None:
+    def append(self, event: ArchiveEvent) -> bool:
         line = json.dumps(
             event_to_dict(event), ensure_ascii=False, separators=(",", ":")
         )
         with self._lock:
             if self._closed or self._handle is None:
-                return
+                self.last_append_ok = False
+                return False
             try:
                 self._handle.write(f"{line}\n")
                 self._handle.flush()
                 os.fsync(self._handle.fileno())
+                self.last_append_ok = True
+                return True
             except OSError as exc:
+                self.last_append_ok = False
                 self._warn(f"写入会话档案失败: {exc}")
+                return False
 
     def close(self) -> None:
         with self._lock:
@@ -271,8 +303,14 @@ def _tool_calls(raw: object) -> list[ToolCall] | None:
     for item in raw:
         if not isinstance(item, dict):
             return None
-        call_id, name, input_text = item.get("id"), item.get("name"), item.get("input")
-        if not all(isinstance(value, str) for value in (call_id, name, input_text)):
+        call_id = item.get("id")
+        name = item.get("name")
+        input_text = item.get("input")
+        if (
+            not isinstance(call_id, str)
+            or not isinstance(name, str)
+            or not isinstance(input_text, str)
+        ):
             return None
         calls.append(ToolCall(call_id, name, input_text))
     return calls
@@ -300,6 +338,57 @@ def _tool_results(raw: object) -> list[ToolResult] | None:
             return None
         results.append(ToolResult(call_id, content, is_error))
     return results
+
+
+def _images(raw: object) -> list[ImageContent] | None:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return None
+    supported = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    images: list[ImageContent] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        media_type = item.get("media_type")
+        data = item.get("data")
+        detail = item.get("detail", "original")
+        sha256 = item.get("sha256", "")
+        width = item.get("width", 0)
+        height = item.get("height", 0)
+        size_bytes = item.get("size_bytes", 0)
+        created_at = item.get("created_at", 0)
+        degraded = item.get("degraded", False)
+        cleared = item.get("cleared", False)
+        integer_values = (width, height, size_bytes, created_at)
+        if (
+            media_type not in supported
+            or not isinstance(data, str)
+            or detail != "original"
+            or not isinstance(sha256, str)
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in integer_values)
+            or any(value < 0 for value in integer_values)
+            or not isinstance(degraded, bool)
+            or not isinstance(cleared, bool)
+            or (cleared and bool(data))
+            or (not cleared and not data)
+        ):
+            return None
+        images.append(
+            ImageContent(
+                media_type=media_type,  # type: ignore[arg-type]
+                data=data,
+                detail="original",
+                sha256=sha256,
+                width=width,
+                height=height,
+                size_bytes=size_bytes,
+                created_at=created_at,
+                degraded=degraded,
+                cleared=cleared,
+            )
+        )
+    return images
 
 
 __all__ = [

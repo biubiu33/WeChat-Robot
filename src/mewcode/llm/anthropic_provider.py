@@ -131,6 +131,8 @@ def to_anthropic_system(req: Request) -> list[dict[str, Any]]:
 def to_anthropic_messages(msgs: list[Message]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for message in msgs:
+        if message.images:
+            raise ValueError("Anthropic Provider 不支持本版图片消息")
         if message.role == "assistant" and message.tool_calls:
             blocks: list[dict[str, Any]] = []
             if message.content:
