@@ -18,7 +18,7 @@ from mewcode.wechat.uia_client import (
     WechatUiaClient,
     WechatUiaError,
 )
-from mewcode.wechat.uia_driver import WechatUiaDriver
+from mewcode.wechat.uia_driver import WechatUiaDriver, strip_self_mention
 
 
 class FakeHook:
@@ -230,12 +230,138 @@ def test_405_session_row_parses_exact_name_and_unread_count() -> None:
     assert conversations[0].unread_count == 1
 
 
+def test_session_row_parses_group_mention_marker() -> None:
+    row = SimpleNamespace(
+        AutomationId="session_item_测试群聊",
+        ClassName="mmui::ChatSessionCell",
+        Name="测试群聊\n[2条] 张三: 你好 [有人@我]",
+        GetRuntimeId=lambda: [42, 8],
+    )
+    client = object.__new__(WechatUiaClient)
+    client._thread_context = nullcontext
+    client._main_window = object
+    client._find_unique = lambda *_, **__: SimpleNamespace(GetChildren=lambda: [row])
+
+    [conversation] = client.visible_conversations()
+
+    assert conversation.name == "测试群聊"
+    assert conversation.mentions_self is True
+
+
+class PassthroughGroupOcr:
+    def preload(self) -> None:
+        pass
+
+    def enrich(self, messages, pane_bounds):
+        del pane_bounds
+        return list(messages)
+
+
+def test_group_driver_emits_context_events_and_only_marks_exact_mentions() -> None:
+    client = FakeClient()
+    client.private = False
+    client.rows = [ConversationRow("group", "测试群聊", signature="old")]
+    client.messages["测试群聊"] = [
+        VisibleMessage("old", "group", "旧消息", True, sender_name="张三")
+    ]
+    client.message_list_bounds = lambda: (0, 0, 800, 600)
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts=set(),
+        allowed_groups={"测试群聊"},
+        self_names={"biubiubiu仿生人"},
+        group_sender_ocr=PassthroughGroupOcr(),
+    )
+    driver.establish_baseline()
+
+    client.rows = [ConversationRow("group", "测试群聊", signature="new")]
+    client.messages["测试群聊"] = [
+        VisibleMessage(
+            "old-runtime-changed", "group", "旧消息", True, sender_name="张三"
+        ),
+        VisibleMessage("normal", "group", "这是普通消息", True, sender_name="张三"),
+        VisibleMessage(
+            "at-1",
+            "group",
+            "@biubiubiu仿生人\u2005问题A",
+            True,
+            sender_name="张三",
+        ),
+        VisibleMessage(
+            "at-2",
+            "group",
+            "@biubiubiu仿生人 问题B @李四",
+            True,
+            sender_name="王五",
+        ),
+    ]
+
+    events = driver.wait_for_events(threading.Event())
+
+    assert [(item.sender_name, item.is_at) for item in events] == [
+        ("张三", False),
+        ("张三", True),
+        ("王五", True),
+    ]
+    assert events[1].text == "问题A"
+    assert events[2].text == "问题B @李四"
+    assert events[1].raw_text.startswith("@biubiubiu仿生人")
+
+
+def test_group_driver_ignores_unknown_sender_even_with_exact_mention() -> None:
+    client = FakeClient()
+    client.private = False
+    client.rows = [ConversationRow("group", "测试群聊", signature="old")]
+    client.messages["测试群聊"] = []
+    client.message_list_bounds = lambda: (0, 0, 800, 600)
+    driver = WechatUiaDriver(
+        client,
+        FakeHook(),
+        allowed_contacts=set(),
+        allowed_groups={"测试群聊"},
+        self_names={"biubiubiu仿生人"},
+        group_sender_ocr=PassthroughGroupOcr(),
+    )
+    driver.establish_baseline()
+    client.rows = [ConversationRow("group", "测试群聊", signature="new")]
+    client.messages["测试群聊"] = [
+        VisibleMessage(
+            "unknown",
+            "group",
+            "@biubiubiu仿生人 你好",
+            True,
+            sender_name="",
+        )
+    ]
+
+    assert driver.wait_for_events(threading.Event()) == []
+
+
+def test_strip_self_mention_is_exact_and_preserves_other_mentions() -> None:
+    cleaned, matched = strip_self_mention(
+        "@biubiubiu仿生人\u2005帮我问一下 @张三",
+        ["biubiubiu仿生人"],
+    )
+    not_cleaned, not_matched = strip_self_mention(
+        "@biubiubiu仿生人助手 你好",
+        ["biubiubiu仿生人"],
+    )
+
+    assert matched is True
+    assert cleaned == "帮我问一下 @张三"
+    assert not_matched is False
+    assert not_cleaned == "@biubiubiu仿生人助手 你好"
+
+
 def test_focus_conversation_uses_verified_search_for_generic_session_item() -> None:
     client = object.__new__(WechatUiaClient)
     client._thread_context = nullcontext
     client.current_conversation_name = lambda: "曾俊"
     window = object()
     client._main_window = lambda: window
+    activated: list[object] = []
+    client._activate_window = lambda actual_window, **_: activated.append(actual_window)
     opened: list[tuple[object, str]] = []
     client._open_conversation_with_search = lambda actual_window, name: opened.append(
         (actual_window, name)
@@ -243,7 +369,56 @@ def test_focus_conversation_uses_verified_search_for_generic_session_item() -> N
 
     client.focus_conversation(ConversationRow("42:7", "biubiubiu仿生人"))
 
+    assert activated == [window]
     assert opened == [(window, "biubiubiu仿生人")]
+
+
+def test_focus_conversation_activates_already_selected_group() -> None:
+    client = object.__new__(WechatUiaClient)
+    client._thread_context = nullcontext
+    window = object()
+    client._main_window = lambda: window
+    client.current_conversation_name = lambda: "测试群聊"
+    activated: list[object] = []
+    client._activate_window = lambda actual_window, **_: activated.append(actual_window)
+
+    client.focus_conversation(ConversationRow("group", "测试群聊", private=False))
+
+    assert activated == [window]
+
+
+def test_focus_group_clicks_unique_visible_session_row() -> None:
+    client = object.__new__(WechatUiaClient)
+    client._thread_context = nullcontext
+    client.current = "好友A"
+    window = object()
+
+    class GroupRow:
+        ClassName = "mmui::ChatSessionCell"
+        Name = "测试群聊"
+
+        def Click(self) -> None:
+            client.current = self.Name
+
+    group = GroupRow()
+    session_list = SimpleNamespace(GetChildren=lambda: [group])
+    client._main_window = lambda: window
+    client._activate_window = lambda *_args, **_kwargs: None
+    client.current_conversation_name = lambda: client.current
+    client._find_unique = lambda *_args, **_kwargs: session_list
+    client._conversation_name = lambda control, raw_name: raw_name
+    clicked: list[object] = []
+
+    def click(control: object) -> None:
+        clicked.append(control)
+        control.Click()
+
+    client._click_preserving_cursor = click
+
+    client.focus_conversation(ConversationRow("group", "测试群聊", private=False))
+
+    assert client.current == "测试群聊"
+    assert clicked == [group]
 
 
 def test_keyboard_search_switches_conversation_without_click() -> None:
@@ -305,6 +480,55 @@ def test_keyboard_search_switches_conversation_without_click() -> None:
     assert window.active is True
     assert client.current == "好友A"
     assert client._auto.keys == ["{Ctrl}f", "{Ctrl}a", "好友A", "{Enter}"]
+
+
+def test_group_search_clicks_unique_result_instead_of_pressing_enter() -> None:
+    value = SimpleNamespace(Value="")
+    search = SimpleNamespace(
+        ClassName=SEARCH_EDIT_CLASS,
+        GetValuePattern=lambda: value,
+    )
+    client = object.__new__(WechatUiaClient)
+    client.current = "好友A"
+    keys: list[str] = []
+
+    class Auto:
+        focused = search
+
+        def SendKeys(self, text: str, **_: object) -> None:
+            keys.append(text)
+            if text == "{Ctrl}a":
+                value.Value = ""
+            elif not text.startswith("{"):
+                value.Value += text
+
+        def GetFocusedControl(self) -> object:
+            return self.focused
+
+    class Result:
+        ClassName = SEARCH_RESULT_CLASS
+        Name = "测试群聊"
+
+        def Click(self) -> None:
+            client.current = self.Name
+
+    result = Result()
+    client._auto = Auto()
+    client._activate_window = lambda *_args, **_kwargs: None
+    client._main_window = object
+    client.current_conversation_name = lambda: client.current
+    client._find_all = lambda *_args, **_kwargs: [result]
+    client._click_preserving_cursor = lambda control: control.Click()
+
+    client._open_conversation_with_search(
+        object(),
+        "测试群聊",
+        timeout_seconds=0.1,
+        click_result=True,
+    )
+
+    assert client.current == "测试群聊"
+    assert "{Enter}" not in keys
 
 
 @pytest.mark.parametrize(
@@ -408,3 +632,137 @@ def test_keyboard_send_false_success_clears_owned_input_and_fails() -> None:
         client._send_with_enter(Input(), value, "好友A", "回复", timeout_seconds=0)
 
     assert value.Value == ""
+
+
+def _mention_test_client(candidates: list[object]):
+    class Value:
+        Value = ""
+
+        def SetValue(self, text: str) -> None:
+            self.Value = text
+
+    value = Value()
+    client = object.__new__(WechatUiaClient)
+
+    class Input:
+        AutomationId = INPUT_ID
+        ClassName = INPUT_CLASS
+
+        def GetValuePattern(self):
+            return value
+
+        def SetFocus(self) -> None:
+            client._auto.focused = self
+
+    class Auto:
+        focused = None
+
+        def SendKeys(self, text: str, **_: object) -> None:
+            if text == "@":
+                value.Value += "@"
+            elif text == "张三":
+                value.Value += "张三"
+            elif text == "{Enter}":
+                value.Value = "@张三 "
+
+        def GetFocusedControl(self):
+            return self.focused
+
+    client._auto = Auto()
+    client._thread_context = nullcontext
+    client.focus_conversation = lambda row: None
+    client._target_matches = lambda name, private: name == "测试群聊" and not private
+    client._main_window = object
+    client._find_unique = lambda *_, **__: Input()
+    client._mention_candidates = lambda name: list(candidates)
+    client._type_unicode_text = lambda text: setattr(value, "Value", value.Value + text)
+    sent: list[str] = []
+
+    def send_with_enter(_input, _value, _name, text, **_kwargs):
+        sent.append(text)
+        value.Value = ""
+
+    client._send_with_enter = send_with_enter
+    return client, value, sent
+
+
+def test_group_first_bubble_selects_unique_real_mention() -> None:
+    client, value, sent = _mention_test_client([object()])
+
+    real = client.send_group_text_with_mention(
+        ConversationRow("group", "测试群聊", private=False),
+        "张三",
+        "第一条",
+        timeout_seconds=0.01,
+    )
+
+    assert real is True
+    assert sent == ["@张三 第一条"]
+    assert value.Value == ""
+
+
+def test_group_real_mention_can_be_hidden_from_value_pattern() -> None:
+    client, value, sent = _mention_test_client([object()])
+    original_send_keys = client._auto.SendKeys
+
+    def hide_rich_mention(text: str, **kwargs: object) -> None:
+        if text == "{Enter}":
+            value.Value = ""
+            return
+        original_send_keys(text, **kwargs)
+
+    client._auto.SendKeys = hide_rich_mention
+
+    real = client.send_group_text_with_mention(
+        ConversationRow("group", "测试群聊", private=False),
+        "张三",
+        "第一条",
+        timeout_seconds=0.01,
+    )
+
+    assert real is True
+    assert sent == ["第一条"]
+    assert value.Value == ""
+
+
+def test_group_first_bubble_falls_back_to_visible_text() -> None:
+    client, value, sent = _mention_test_client([])
+    keys: list[str] = []
+    original_send_keys = client._auto.SendKeys
+
+    def record_keys(text: str, **kwargs: object) -> None:
+        keys.append(text)
+        original_send_keys(text, **kwargs)
+
+    client._auto.SendKeys = record_keys
+
+    real = client.send_group_text_with_mention(
+        ConversationRow("group", "测试群聊", private=False),
+        "张三",
+        "第一条",
+        timeout_seconds=0,
+    )
+
+    assert real is False
+    assert sent == ["@张三\n第一条"]
+    assert value.Value == ""
+    assert "{Esc}" not in keys
+    assert "没有唯一精确匹配" in client.mention_fallback_reason()
+
+
+def test_group_mention_refuses_to_clear_concurrent_user_draft() -> None:
+    client, value, sent = _mention_test_client([])
+    client._type_unicode_text = lambda text: setattr(
+        value, "Value", value.Value + text + "用户输入"
+    )
+
+    with pytest.raises(WechatUiaError, match="无法安全清理"):
+        client.send_group_text_with_mention(
+            ConversationRow("group", "测试群聊", private=False),
+            "张三",
+            "第一条",
+            timeout_seconds=0,
+        )
+
+    assert value.Value == "@张三用户输入"
+    assert sent == []

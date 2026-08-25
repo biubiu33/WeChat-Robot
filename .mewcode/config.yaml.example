@@ -20,6 +20,10 @@ providers:
 #   provider: claude
 #   allowed_contacts:
 #     - 专用测试好友
+#   allowed_groups:
+#     - 测试群聊
+#   self_names:
+#     - biubiubiu仿生人
 #   info_tools:
 #     enabled: true
 #     tavily_api_key: ${TAVILY_API_KEY}

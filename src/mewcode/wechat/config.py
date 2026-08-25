@@ -29,6 +29,8 @@ class WechatConfig:
     max_reply_chars: int
     log_level: str
     info_tools: WechatInfoConfig = field(default_factory=WechatInfoConfig)
+    allowed_groups: tuple[str, ...] = ()
+    self_names: tuple[str, ...] = ()
 
 
 def parse_wechat_config(
@@ -42,17 +44,9 @@ def parse_wechat_config(
         raise ConfigError("wechat.enabled 必须是布尔值")
 
     provider = _optional_str(raw, "provider", "")
-    contacts_raw = raw.get("allowed_contacts", [])
-    if not isinstance(contacts_raw, list):
-        raise ConfigError("wechat.allowed_contacts 必须是字符串列表")
-    contacts: list[str] = []
-    for index, value in enumerate(contacts_raw):
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigError(f"wechat.allowed_contacts[{index}] 必须是非空字符串")
-        contact = value.strip()
-        if contact in contacts:
-            raise ConfigError(f"wechat.allowed_contacts 存在重复项: {contact}")
-        contacts.append(contact)
+    contacts = _string_list(raw, "allowed_contacts")
+    groups = _string_list(raw, "allowed_groups")
+    self_names = _string_list(raw, "self_names")
 
     timeout = _positive_number(raw, "task_timeout_seconds", 180.0)
     max_reply_chars = _positive_int(raw, "max_reply_chars", 1500)
@@ -68,8 +62,15 @@ def parse_wechat_config(
             raise ConfigError("启用微信机器人时必须配置 wechat.provider")
         if provider not in provider_names:
             raise ConfigError(f"wechat.provider 未引用现有 Provider: {provider}")
-        if not contacts:
-            raise ConfigError("启用微信机器人时 allowed_contacts 不能为空")
+        if not contacts and not groups:
+            raise ConfigError(
+                "启用微信机器人时 allowed_contacts 不能为空，除非 allowed_groups 非空"
+            )
+        if groups and not self_names:
+            raise ConfigError("启用微信群聊时 self_names 不能为空")
+        overlap = sorted(set(contacts) & set(groups))
+        if overlap:
+            raise ConfigError(f"微信私聊与群聊白名单存在同名会话: {overlap[0]}")
 
     return WechatConfig(
         enabled=enabled,
@@ -78,8 +79,25 @@ def parse_wechat_config(
         task_timeout_seconds=timeout,
         max_reply_chars=max_reply_chars,
         log_level=log_level,
+        allowed_groups=tuple(groups),
+        self_names=tuple(self_names),
         info_tools=info_tools,
     )
+
+
+def _string_list(raw: dict[str, Any], key: str) -> list[str]:
+    values = raw.get(key, [])
+    if not isinstance(values, list):
+        raise ConfigError(f"wechat.{key} 必须是字符串列表")
+    parsed: list[str] = []
+    for index, value in enumerate(values):
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"wechat.{key}[{index}] 必须是非空字符串")
+        item = value.strip()
+        if item in parsed:
+            raise ConfigError(f"wechat.{key} 存在重复项: {item}")
+        parsed.append(item)
+    return parsed
 
 
 def _parse_info_tools(raw: object) -> WechatInfoConfig:

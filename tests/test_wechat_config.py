@@ -99,6 +99,46 @@ def test_enabled_config_requires_known_provider_and_allowlist() -> None:
         )
 
 
+def test_group_config_parses_exact_allowlist_and_self_names() -> None:
+    config = parse_wechat_config(
+        {
+            "enabled": True,
+            "provider": "chat",
+            "allowed_groups": [" 测试群聊 "],
+            "self_names": [" biubiubiu仿生人 "],
+        },
+        {"chat"},
+    )
+
+    assert config.allowed_contacts == ()
+    assert config.allowed_groups == ("测试群聊",)
+    assert config.self_names == ("biubiubiu仿生人",)
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"allowed_groups": ["群"]}, "self_names 不能为空"),
+        (
+            {
+                "allowed_contacts": ["同名"],
+                "allowed_groups": ["同名"],
+                "self_names": ["机器人"],
+            },
+            "存在同名会话",
+        ),
+        (
+            {"allowed_groups": ["群", "群"], "self_names": ["机器人"]},
+            "allowed_groups 存在重复项",
+        ),
+    ],
+)
+def test_group_config_rejects_unsafe_values(extra: dict, message: str) -> None:
+    raw = {"enabled": True, "provider": "chat", **extra}
+    with pytest.raises(ConfigError, match=message):
+        parse_wechat_config(raw, {"chat"})
+
+
 def test_info_tools_default_off_and_expand_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

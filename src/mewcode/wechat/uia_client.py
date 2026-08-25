@@ -24,6 +24,7 @@ CHAT_NAME_ID_SUFFIX = "current_chat_name_label"
 CHAT_COUNT_ID_SUFFIX = "current_chat_count_label"
 SESSION_ITEM_PREFIX = "session_item_"
 UNREAD_RE = re.compile(r"(?:\[(\d+)\s*条\]|(\d+)\s*条未读)")
+MENTION_MARKERS = ("[有人@我]", "有人@我", "[Someone mentioned me]")
 
 
 class WechatUiaError(RuntimeError):
@@ -69,7 +70,7 @@ class WechatUiaClient:
         with self._thread_context():
             return {int(self._main_window().ProcessId)}
 
-    def visible_private_conversations(self) -> list[ConversationRow]:
+    def visible_conversations(self) -> list[ConversationRow]:
         with self._thread_context():
             window = self._main_window()
             session_list = self._find_unique(window, automation_id=SESSION_LIST_ID)
@@ -98,15 +99,34 @@ class WechatUiaClient:
                         runtime_id=runtime_id,
                         signature=signature,
                         unread_count=unread_count,
+                        private=None,
+                        mentions_self=any(
+                            marker in raw_name for marker in MENTION_MARKERS
+                        ),
                     )
                 )
             return rows
 
+    def visible_private_conversations(self) -> list[ConversationRow]:
+        """Compatibility alias retained for callers outside the driver."""
+
+        return self.visible_conversations()
+
     def focus_conversation(self, row: ConversationRow) -> None:
         with self._thread_context():
+            window = self._main_window()
+            self._activate_window(window)
             if self.current_conversation_name() == row.name:
                 return
-            window = self._main_window()
+            if row.private is False and self._open_visible_group(window, row):
+                return
+            if row.private is False:
+                self._open_conversation_with_search(
+                    window,
+                    row.name,
+                    click_result=True,
+                )
+                return
             self._open_conversation_with_search(window, row.name)
 
     def current_conversation_name(self) -> str:
@@ -130,12 +150,14 @@ class WechatUiaClient:
             ]
             return not count_labels
 
+    def current_conversation_is_group(self) -> bool:
+        return not self.current_conversation_is_private()
+
     def visible_text_messages(self, row: ConversationRow) -> list[VisibleMessage]:
         with self._thread_context():
             if self.current_conversation_name() != row.name:
                 raise WechatUiaError("读取消息前目标会话已变化")
-            if not self.current_conversation_is_private():
-                return []
+            private = self.current_conversation_is_private()
             window = self._main_window()
             message_list = self._find_unique(window, automation_id=MESSAGE_LIST_ID)
             messages: list[VisibleMessage] = []
@@ -153,17 +175,25 @@ class WechatUiaClient:
                         key=":".join(map(str, runtime_id)) or text,
                         conversation_key=row.key,
                         text=text,
-                        incoming=True,
-                        sender_name=row.name,
+                        incoming=private,
+                        sender_name=row.name if private else "",
+                        bounds=self._bounds(control),
                     )
                 )
             return messages
 
-    def validate_target(self, conversation_name: str) -> bool:
+    def message_list_bounds(self) -> tuple[int, int, int, int] | None:
+        with self._thread_context():
+            window = self._main_window()
+            return self._bounds(
+                self._find_unique(window, automation_id=MESSAGE_LIST_ID)
+            )
+
+    def validate_target(self, conversation_name: str, private: bool = True) -> bool:
         with self._thread_context():
             return (
                 self.current_conversation_name() == conversation_name
-                and self.current_conversation_is_private()
+                and self.current_conversation_is_private() is private
             )
 
     def send_text(self, row: ConversationRow, text: str) -> None:
@@ -171,7 +201,8 @@ class WechatUiaClient:
             if not text:
                 return
             self.focus_conversation(row)
-            if not self.validate_target(row.name):
+            private = row.private is not False
+            if not self._target_matches(row.name, private):
                 raise WechatUiaError("发送前无法确认原微信会话")
             window = self._main_window()
             input_control = self._find_unique(window, automation_id=INPUT_ID)
@@ -181,10 +212,102 @@ class WechatUiaClient:
             if value.Value:
                 raise WechatUiaError("微信输入框存在未发送内容，已拒绝覆盖")
             value.SetValue(text)
-            if not self.validate_target(row.name):
+            if not self._target_matches(row.name, private):
                 value.SetValue("")
                 raise WechatUiaError("写入后微信目标会话发生变化，已取消发送")
-            self._send_with_enter(input_control, value, row.name, text)
+            self._send_with_enter(
+                input_control,
+                value,
+                row.name,
+                text,
+                private=private,
+            )
+
+    def send_group_text_with_mention(
+        self,
+        row: ConversationRow,
+        sender_name: str,
+        text: str,
+        *,
+        timeout_seconds: float = 1.5,
+    ) -> bool:
+        """Send one group bubble, preferring a real WeChat mention.
+
+        Returns True for a selected member mention and False for the safe text
+        fallback. It never retries the final send.
+        """
+
+        with self._thread_context():
+            self.focus_conversation(row)
+            if not self._target_matches(row.name, False):
+                raise WechatUiaError("发送前无法确认原微信群聊")
+            window = self._main_window()
+            input_control = self._find_unique(window, automation_id=INPUT_ID)
+            value = input_control.GetValuePattern()
+            if value is None:
+                raise WechatUiaError("微信输入框不支持 ValuePattern")
+            if value.Value:
+                raise WechatUiaError("微信输入框存在未发送内容，已拒绝覆盖")
+
+            fallback_reason = "群成员菜单没有唯一精确匹配"
+            owned_values = {f"@{sender_name}"}
+            try:
+                input_control.SetFocus()
+                self._auto.SendKeys("@", waitTime=0.15)
+                self._type_unicode_text(sender_name)
+                time.sleep(0.15)
+                deadline = time.monotonic() + timeout_seconds
+                candidates: list[Any] = []
+                while time.monotonic() < deadline:
+                    candidates = self._mention_candidates(sender_name)
+                    if len(candidates) == 1:
+                        break
+                    if len(candidates) > 1:
+                        fallback_reason = "群成员菜单存在多个同名成员"
+                        break
+                    time.sleep(0.05)
+                if len(candidates) == 1:
+                    self._auto.SendKeys("{Enter}", waitTime=0.15)
+                    prefix = str(value.Value or "")
+                    owned_values.add(prefix)
+                    if not self._target_matches(row.name, False):
+                        fallback_reason = "选择群成员后目标群发生变化"
+                    else:
+                        self._type_unicode_text(text)
+                        final_value = str(value.Value or "")
+                        if not final_value or text not in final_value:
+                            raise WechatUiaError("追加群回复正文失败")
+                        self._send_with_enter(
+                            input_control,
+                            value,
+                            row.name,
+                            final_value,
+                            private=False,
+                        )
+                        return True
+            except WechatUiaError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - fall back after UI variance
+                fallback_reason = f"群成员菜单操作失败: {type(exc).__name__}"
+
+            self._clear_owned_input(value, tuple(owned_values))
+            fallback = f"@{sender_name}\n{text}"
+            value.SetValue(fallback)
+            if not self._target_matches(row.name, False):
+                self._clear_owned_input(value, (fallback,))
+                raise WechatUiaError("文本 @ 降级前目标群发生变化")
+            self._send_with_enter(
+                input_control,
+                value,
+                row.name,
+                fallback,
+                private=False,
+            )
+            self._last_mention_fallback_reason = fallback_reason
+            return False
+
+    def mention_fallback_reason(self) -> str:
+        return str(getattr(self, "_last_mention_fallback_reason", ""))
 
     def _open_conversation_with_search(
         self,
@@ -192,6 +315,7 @@ class WechatUiaClient:
         conversation_name: str,
         *,
         timeout_seconds: float = 2.0,
+        click_result: bool = False,
     ) -> None:
         self._activate_window(window, timeout_seconds=timeout_seconds)
         self._auto.SendKeys("{Ctrl}f", waitTime=0.2)
@@ -228,7 +352,10 @@ class WechatUiaClient:
             self._dismiss_search()
             raise WechatUiaError(f"未找到微信好友 {conversation_name!r} 的搜索结果")
 
-        self._auto.SendKeys("{Enter}", waitTime=0.3)
+        if click_result:
+            self._click_preserving_cursor(results[0])
+        else:
+            self._auto.SendKeys("{Enter}", waitTime=0.3)
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if self.current_conversation_name() == conversation_name:
@@ -236,6 +363,34 @@ class WechatUiaClient:
             time.sleep(0.05)
         self._dismiss_search()
         raise WechatUiaError(f"切换到微信会话 {conversation_name!r} 超时")
+
+    def _open_visible_group(self, window: Any, row: ConversationRow) -> bool:
+        session_list = self._find_unique(window, automation_id=SESSION_LIST_ID)
+        candidates = [
+            control
+            for control in session_list.GetChildren()
+            if control.ClassName == "mmui::ChatSessionCell"
+            and self._conversation_name(control, control.Name or "") == row.name
+        ]
+        if len(candidates) != 1:
+            return False
+        self._click_preserving_cursor(candidates[0])
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if self.current_conversation_name() == row.name:
+                return True
+            time.sleep(0.05)
+        raise WechatUiaError(f"点击微信群聊 {row.name!r} 后详情页未激活")
+
+    @staticmethod
+    def _click_preserving_cursor(control: Any) -> None:
+        import win32api
+
+        cursor = win32api.GetCursorPos()
+        try:
+            control.Click()
+        finally:
+            win32api.SetCursorPos(cursor)
 
     @staticmethod
     def _activate_window(window: Any, *, timeout_seconds: float = 2.0) -> None:
@@ -258,6 +413,7 @@ class WechatUiaClient:
         text: str,
         *,
         timeout_seconds: float = 2.0,
+        private: bool = True,
     ) -> None:
         input_control.SetFocus()
         focused = self._auto.GetFocusedControl()
@@ -266,7 +422,7 @@ class WechatUiaClient:
             or focused.AutomationId != INPUT_ID
             or focused.ClassName != INPUT_CLASS
             or value.Value != text
-            or not self.validate_target(conversation_name)
+            or not self._target_matches(conversation_name, private)
         ):
             if value.Value == text:
                 value.SetValue("")
@@ -276,7 +432,7 @@ class WechatUiaClient:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if not value.Value:
-                if not self.validate_target(conversation_name):
+                if not self._target_matches(conversation_name, private):
                     raise WechatUiaError("发送后微信目标会话发生变化")
                 return
             time.sleep(0.05)
@@ -286,10 +442,54 @@ class WechatUiaClient:
             value.SetValue("")
         raise WechatUiaError("按 Enter 后微信输入框未清空，消息可能未发送")
 
+    def _mention_candidates(self, sender_name: str) -> list[Any]:
+        candidates: list[Any] = []
+        window = self._main_window()
+        expected_process = int(getattr(window, "ProcessId", 0) or 0)
+        for control in self._walk(self._auto.GetRootControl()):
+            if str(getattr(control, "Name", "")).strip() != sender_name:
+                continue
+            process_id = int(getattr(control, "ProcessId", 0) or 0)
+            if expected_process and process_id != expected_process:
+                continue
+            if bool(getattr(control, "IsOffscreen", False)):
+                continue
+            class_name = str(getattr(control, "ClassName", "")).casefold()
+            if not any(
+                token in class_name
+                for token in ("member", "contact", "mention", "listitem", "cell")
+            ):
+                continue
+            candidates.append(control)
+        return candidates
+
+    def _type_unicode_text(self, text: str) -> None:
+        for character in text:
+            if not self._auto.SendUnicodeChar(character):
+                raise WechatUiaError("向微信输入群回复正文失败")
+        time.sleep(0.05)
+
+    def _clear_owned_input(self, value: Any, owned_values: tuple[str, ...]) -> None:
+        current = str(value.Value or "")
+        if current and current not in owned_values:
+            raise WechatUiaError("微信输入框内容发生变化，无法安全清理本次 @ 草稿")
+        if current:
+            value.SetValue("")
+        if value.Value:
+            raise WechatUiaError("无法清理由本次 @ 操作写入的输入内容")
+
     def _dismiss_search(self) -> None:
         focused = self._auto.GetFocusedControl()
         if focused is not None and focused.ClassName == SEARCH_EDIT_CLASS:
             self._auto.SendKeys("{Esc}", waitTime=0.1)
+
+    def _target_matches(self, conversation_name: str, private: bool) -> bool:
+        try:
+            return self.validate_target(conversation_name, private)
+        except TypeError:
+            # Retains compatibility with injected legacy clients in focused
+            # tests and third-party wrappers that only accepted the name.
+            return self.validate_target(conversation_name)
 
     @contextmanager
     def _thread_context(self) -> Iterable[None]:
@@ -404,6 +604,21 @@ class WechatUiaClient:
             "automation_id": control.AutomationId,
             "runtime_id": list(control.GetRuntimeId() or ()),
         }
+
+    @staticmethod
+    def _bounds(control: Any) -> tuple[int, int, int, int] | None:
+        rectangle = getattr(control, "BoundingRectangle", None)
+        if rectangle is None:
+            return None
+        values = (
+            getattr(rectangle, "left", getattr(rectangle, "Left", None)),
+            getattr(rectangle, "top", getattr(rectangle, "Top", None)),
+            getattr(rectangle, "right", getattr(rectangle, "Right", None)),
+            getattr(rectangle, "bottom", getattr(rectangle, "Bottom", None)),
+        )
+        if any(value is None for value in values):
+            return None
+        return tuple(int(value) for value in values)  # type: ignore[return-value]
 
 
 __all__ = [

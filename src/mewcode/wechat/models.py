@@ -11,7 +11,8 @@ class ConversationRow:
     runtime_id: tuple[int, ...] = ()
     signature: str = ""
     unread_count: int = 0
-    private: bool = True
+    private: bool | None = None
+    mentions_self: bool = False
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class VisibleMessage:
     incoming: bool
     kind: str = "text"
     sender_name: str = ""
+    bounds: tuple[int, int, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,15 @@ class WechatDesktopEvent:
     observed_at: float
     incoming: bool
     private: bool
+    is_at: bool = False
+    raw_text: str = ""
+
+
+@dataclass(frozen=True)
+class GroupHistoryItem:
+    message_key: str
+    sender_name: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -57,6 +68,9 @@ class QueuedBatch:
     events: tuple[WechatDesktopEvent, ...]
     revision: int
     enqueued_at: float
+    sender_name: str = ""
+    private: bool = True
+    group_history: tuple[GroupHistoryItem, ...] = ()
 
     @property
     def text(self) -> str:
@@ -73,6 +87,7 @@ class WechatReply:
 __all__ = [
     "ConversationBinding",
     "ConversationRow",
+    "GroupHistoryItem",
     "PendingBatch",
     "QueuedBatch",
     "VisibleMessage",

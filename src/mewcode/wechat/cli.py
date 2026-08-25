@@ -11,6 +11,7 @@ from mewcode.config import ConfigError, discover_config_path, load
 
 from .bot import WechatBot
 from .config import parse_wechat_config
+from .group_sender_ocr import GroupSenderOcrUnavailable
 from .runtime import WechatAgentRuntime
 from .store import WechatStateStore
 from .uia_client import SUPPORTED_WECHAT_VERSIONS, WechatUiaClient, WechatUiaError
@@ -60,7 +61,11 @@ def main() -> None:
         driver = WechatUiaDriver(
             client,
             allowed_contacts=wechat_config.allowed_contacts,
+            allowed_groups=wechat_config.allowed_groups,
+            self_names=wechat_config.self_names,
         )
+        if wechat_config.allowed_groups:
+            driver.preload_group_ocr()
         runtime = WechatAgentRuntime(
             root,
             provider_config,
@@ -68,7 +73,7 @@ def main() -> None:
             store,
         )
         asyncio.run(WechatBot(wechat_config, driver, runtime, store).run())
-    except (ConfigError, WechatUiaError) as exc:
+    except (ConfigError, GroupSenderOcrUnavailable, WechatUiaError) as exc:
         print(f"微信机器人配置错误: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     except KeyboardInterrupt:
