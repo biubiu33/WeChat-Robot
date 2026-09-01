@@ -1277,7 +1277,7 @@ def test_keyboard_send_false_success_clears_owned_input_and_fails() -> None:
     assert value.Value == ""
 
 
-def _mention_test_client(candidates: list[object]):
+def _mention_test_client():
     class Value:
         Value = ""
 
@@ -1317,7 +1317,6 @@ def _mention_test_client(candidates: list[object]):
     client._target_matches = lambda name, private: name == "测试群聊" and not private
     client._main_window = object
     client._find_unique = lambda *_, **__: Input()
-    client._mention_candidates = lambda name: list(candidates)
     client._type_unicode_text = lambda text: setattr(value, "Value", value.Value + text)
     sent: list[str] = []
 
@@ -1329,8 +1328,11 @@ def _mention_test_client(candidates: list[object]):
     return client, value, sent
 
 
-def test_group_first_bubble_selects_unique_real_mention() -> None:
-    client, value, sent = _mention_test_client([object()])
+def test_group_first_bubble_uses_enter_without_walking_member_menu() -> None:
+    client, value, sent = _mention_test_client()
+    client._mention_candidates = lambda _name: (_ for _ in ()).throw(
+        RuntimeError("COMError")
+    )
 
     real = client.send_group_text_with_mention(
         ConversationRow("group", "测试群聊", private=False),
@@ -1345,7 +1347,7 @@ def test_group_first_bubble_selects_unique_real_mention() -> None:
 
 
 def test_group_real_mention_can_be_hidden_from_value_pattern() -> None:
-    client, value, sent = _mention_test_client([object()])
+    client, value, sent = _mention_test_client()
     original_send_keys = client._auto.SendKeys
 
     def hide_rich_mention(text: str, **kwargs: object) -> None:
@@ -1369,12 +1371,14 @@ def test_group_real_mention_can_be_hidden_from_value_pattern() -> None:
 
 
 def test_group_first_bubble_falls_back_to_visible_text() -> None:
-    client, value, sent = _mention_test_client([])
+    client, value, sent = _mention_test_client()
     keys: list[str] = []
     original_send_keys = client._auto.SendKeys
 
     def record_keys(text: str, **kwargs: object) -> None:
         keys.append(text)
+        if text == "{Enter}":
+            return
         original_send_keys(text, **kwargs)
 
     client._auto.SendKeys = record_keys
@@ -1390,16 +1394,16 @@ def test_group_first_bubble_falls_back_to_visible_text() -> None:
     assert sent == ["@张三\n第一条"]
     assert value.Value == ""
     assert "{Esc}" not in keys
-    assert "没有唯一精确匹配" in client.mention_fallback_reason()
+    assert "未生成微信原生 @" in client.mention_fallback_reason()
 
 
 def test_group_mention_refuses_to_clear_concurrent_user_draft() -> None:
-    client, value, sent = _mention_test_client([])
+    client, value, sent = _mention_test_client()
     client._type_unicode_text = lambda text: setattr(
         value, "Value", value.Value + text + "用户输入"
     )
 
-    with pytest.raises(WechatUiaError, match="无法安全清理"):
+    with pytest.raises(WechatUiaError, match="输入框内容发生变化"):
         client.send_group_text_with_mention(
             ConversationRow("group", "测试群聊", private=False),
             "张三",

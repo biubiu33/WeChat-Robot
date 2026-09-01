@@ -863,42 +863,36 @@ class WechatUiaClient:
             if value.Value:
                 raise WechatUiaError("微信输入框存在未发送内容，已拒绝覆盖")
 
-            fallback_reason = "群成员菜单没有唯一精确匹配"
+            fallback_reason = "按 Enter 后未生成微信原生 @"
             owned_values = {f"@{sender_name}"}
             try:
                 input_control.SetFocus()
                 self._auto.SendKeys("@", waitTime=0.15)
                 self._type_unicode_text(sender_name)
-                time.sleep(0.15)
-                deadline = time.monotonic() + timeout_seconds
-                candidates: list[Any] = []
-                while time.monotonic() < deadline:
-                    candidates = self._mention_candidates(sender_name)
-                    if len(candidates) == 1:
-                        break
-                    if len(candidates) > 1:
-                        fallback_reason = "群成员菜单存在多个同名成员"
-                        break
-                    time.sleep(0.05)
-                if len(candidates) == 1:
-                    self._auto.SendKeys("{Enter}", waitTime=0.15)
-                    prefix = str(value.Value or "")
-                    owned_values.add(prefix)
-                    if not self._target_matches(row.name, False):
-                        fallback_reason = "选择群成员后目标群发生变化"
-                    else:
-                        self._type_unicode_text(text)
-                        final_value = str(value.Value or "")
-                        if not final_value or text not in final_value:
-                            raise WechatUiaError("追加群回复正文失败")
-                        self._send_with_enter(
-                            input_control,
-                            value,
-                            row.name,
-                            final_value,
-                            private=False,
-                        )
-                        return True
+                time.sleep(min(0.15, max(0.0, timeout_seconds)))
+                draft = str(value.Value or "")
+                if draft != f"@{sender_name}":
+                    raise WechatUiaError("输入 @ 人名时微信输入框内容发生变化")
+                self._auto.SendKeys("{Enter}", waitTime=0.15)
+                prefix = str(value.Value or "")
+                owned_values.add(prefix)
+                if prefix == draft:
+                    fallback_reason = "按 Enter 后未生成微信原生 @"
+                elif not self._target_matches(row.name, False):
+                    fallback_reason = "选择群成员后目标群发生变化"
+                else:
+                    self._type_unicode_text(text)
+                    final_value = str(value.Value or "")
+                    if not final_value or text not in final_value:
+                        raise WechatUiaError("追加群回复正文失败")
+                    self._send_with_enter(
+                        input_control,
+                        value,
+                        row.name,
+                        final_value,
+                        private=False,
+                    )
+                    return True
             except WechatUiaError:
                 raise
             except Exception as exc:  # noqa: BLE001 - fall back after UI variance
@@ -1055,27 +1049,6 @@ class WechatUiaClient:
         if value.Value.rstrip("\r\n") == text:
             value.SetValue("")
         raise WechatUiaError("按 Enter 后微信输入框未清空，消息可能未发送")
-
-    def _mention_candidates(self, sender_name: str) -> list[Any]:
-        candidates: list[Any] = []
-        window = self._main_window()
-        expected_process = int(getattr(window, "ProcessId", 0) or 0)
-        for control in self._walk(self._auto.GetRootControl()):
-            if str(getattr(control, "Name", "")).strip() != sender_name:
-                continue
-            process_id = int(getattr(control, "ProcessId", 0) or 0)
-            if expected_process and process_id != expected_process:
-                continue
-            if bool(getattr(control, "IsOffscreen", False)):
-                continue
-            class_name = str(getattr(control, "ClassName", "")).casefold()
-            if not any(
-                token in class_name
-                for token in ("member", "contact", "mention", "listitem", "cell")
-            ):
-                continue
-            candidates.append(control)
-        return candidates
 
     def _type_unicode_text(self, text: str) -> None:
         for character in text:
