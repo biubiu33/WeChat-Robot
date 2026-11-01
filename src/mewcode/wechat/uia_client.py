@@ -881,9 +881,10 @@ class WechatUiaClient:
                 elif not self._target_matches(row.name, False):
                     fallback_reason = "选择群成员后目标群发生变化"
                 else:
-                    self._type_unicode_text(text)
-                    final_value = str(value.Value or "")
-                    if not final_value or text not in final_value:
+                    final_value = self._paste_unicode_text(input_control, value, text)
+                    normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+                    normalized_value = final_value.replace("\r\n", "\n").replace("\r", "\n")
+                    if not normalized_value or normalized_text not in normalized_value:
                         raise WechatUiaError("追加群回复正文失败")
                     self._send_with_enter(
                         input_control,
@@ -1049,6 +1050,106 @@ class WechatUiaClient:
         if value.Value.rstrip("\r\n") == text:
             value.SetValue("")
         raise WechatUiaError("按 Enter 后微信输入框未清空，消息可能未发送")
+
+    @staticmethod
+    def _set_windows_clipboard_text(text: str) -> None:
+        import ctypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        open_clipboard = user32.OpenClipboard
+        open_clipboard.argtypes = [ctypes.c_void_p]
+        open_clipboard.restype = ctypes.c_int
+
+        empty_clipboard = user32.EmptyClipboard
+        empty_clipboard.argtypes = []
+        empty_clipboard.restype = ctypes.c_int
+
+        set_clipboard_data = user32.SetClipboardData
+        set_clipboard_data.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        set_clipboard_data.restype = ctypes.c_void_p
+
+        close_clipboard = user32.CloseClipboard
+        close_clipboard.argtypes = []
+        close_clipboard.restype = ctypes.c_int
+
+        global_alloc = kernel32.GlobalAlloc
+        global_alloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        global_alloc.restype = ctypes.c_void_p
+
+        global_lock = kernel32.GlobalLock
+        global_lock.argtypes = [ctypes.c_void_p]
+        global_lock.restype = ctypes.c_void_p
+
+        global_unlock = kernel32.GlobalUnlock
+        global_unlock.argtypes = [ctypes.c_void_p]
+        global_unlock.restype = ctypes.c_int
+
+        global_free = kernel32.GlobalFree
+        global_free.argtypes = [ctypes.c_void_p]
+        global_free.restype = ctypes.c_void_p
+
+        encoded = (text + "\0").encode("utf-16-le")
+        opened = False
+        memory = None
+
+        for _ in range(20):
+            if open_clipboard(None):
+                opened = True
+                break
+            time.sleep(0.05)
+
+        if not opened:
+            raise WechatUiaError("Could not open the Windows clipboard")
+
+        try:
+            memory = global_alloc(0x0002, len(encoded))
+            if not memory:
+                raise WechatUiaError("Could not allocate clipboard memory")
+
+            pointer = global_lock(memory)
+            if not pointer:
+                raise WechatUiaError("Could not lock clipboard memory")
+
+            try:
+                ctypes.memmove(pointer, encoded, len(encoded))
+            finally:
+                global_unlock(memory)
+
+            if not empty_clipboard():
+                raise WechatUiaError("Could not clear the Windows clipboard")
+
+            if not set_clipboard_data(13, memory):
+                raise WechatUiaError("Could not write text to the Windows clipboard")
+
+            memory = None
+
+        finally:
+            if memory:
+                global_free(memory)
+            if opened:
+                close_clipboard()
+
+    def _paste_unicode_text(self, input_control: Any, value: Any, text: str) -> str:
+        self._set_windows_clipboard_text(text)
+        input_control.SetFocus()
+        self._auto.SendKeys("{Ctrl}v", waitTime=0.1)
+
+        expected = text.replace("\r\n", "\n").replace("\r", "\n")
+        deadline = time.monotonic() + 1.5
+        current = ""
+
+        while time.monotonic() < deadline:
+            current = str(value.Value or "")
+            normalized = current.replace("\r\n", "\n").replace("\r", "\n")
+
+            if expected and expected in normalized:
+                return current
+
+            time.sleep(0.05)
+
+        return str(value.Value or "")
 
     def _type_unicode_text(self, text: str) -> None:
         for character in text:
